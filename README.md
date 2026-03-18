@@ -1,77 +1,94 @@
 ﻿# VehicleFormer
 
-VehicleFormer is a research-grade framework for robust communication
-orchestration in Intelligent Connected Vehicle (ICV) systems.
+[![Python](https://img.shields.io/badge/Python-3.10%2B-blue.svg)](#installation)
+[![PyTorch](https://img.shields.io/badge/PyTorch-2.x-ee4c2c.svg)](#core-method)
+[![SUMO](https://img.shields.io/badge/Simulator-SUMO-success.svg)](#installation)
+[![Status](https://img.shields.io/badge/Status-Research-orange.svg)](#project-status)
 
-It combines graph-based state modeling, reinforcement learning control, and
-robustness-oriented evaluation across heterogeneous networks (5G, C-V2X,
-satellite) in SUMO simulation.
+VehicleFormer is a research framework for robust communication orchestration in
+Intelligent Connected Vehicle (ICV) systems. It combines graph-based state
+representation, reinforcement learning control, and robustness-oriented
+evaluation across heterogeneous networks (5G, C-V2X, satellite) in SUMO.
 
-## Why VehicleFormer
+## Table of Contents
 
-Connected vehicles operate under dynamic channel quality, infrastructure load,
+- [Overview](#overview)
+- [Core Method](#core-method)
+- [Repository Structure](#repository-structure)
+- [Installation](#installation)
+- [Quick Start](#quick-start)
+- [Experiment Workflows](#experiment-workflows)
+- [Results Snapshot](#results-snapshot)
+- [Reproducibility](#reproducibility)
+- [Project Status](#project-status)
+- [Citation](#citation)
+- [License](#license)
+
+## Overview
+
+Connected vehicles face dynamic channel quality, variable infrastructure load,
 handover events, and strict latency/reliability constraints. VehicleFormer is
-designed to study these trade-offs in a reproducible, end-to-end pipeline.
+designed to study these trade-offs in a reproducible, end-to-end setting.
 
-Main goals:
+Primary objectives:
 
 - Learn adaptive network-selection and control policies
-- Evaluate robustness under outages and congestion bursts
-- Produce publication-ready experiments (baseline, ablation, stress tests)
+- Quantify robustness under outages and congestion bursts
+- Support publication-ready workflows (baseline, ablation, stress evaluation)
 
 ## Core Method
 
 VehicleFormer integrates the following modules:
 
 - HetGNN encoder for heterogeneous vehicle-infrastructure state representation
-- SAC agent for continuous control and policy optimization
+- SAC policy optimization for continuous control actions
 - Optional world-model auxiliary learning
 - Optional LLM-prior KL regularization during training
-- Stress-evaluation harness for scenario-level robustness analysis
+- Stress evaluation harness for scenario-level robustness analysis
 
 ## Repository Structure
 
 ```text
 configs/
-	default.yaml            # baseline configuration
-	paper_robust.yaml       # robustness-focused paper configuration
+  default.yaml              # baseline configuration
+  paper_robust.yaml         # robustness-focused paper configuration
 
-data/sumo/                # SUMO network/route/config files
+data/sumo/                  # SUMO network/route/config files
 
 scripts/
-	create_sumo_scenario.py # SUMO scenario generation
-	verify_install.py       # environment and dependency checks
-	run_ablations.py        # ablation batch runner
-	resume_ablations.py     # continue interrupted ablations
-	stress_eval.py          # robustness evaluation across stress scenarios
-	diagnose.py             # diagnostics script
+  create_sumo_scenario.py   # SUMO scenario generation
+  verify_install.py         # environment and dependency checks
+  run_ablations.py          # ablation batch runner
+  resume_ablations.py       # continue interrupted ablations
+  stress_eval.py            # robustness evaluation across stress scenarios
+  diagnose.py               # diagnostics script
 
 vehicleformer/
-	env/                    # SUMO bridge and network environment logic
-	models/                 # HetGNN, SAC, world model, LLM prior
-	training/               # trainer and replay buffer
-	utils/                  # logging and KPI utilities
+  env/                      # SUMO bridge and network environment logic
+  models/                   # HetGNN, SAC, world model, LLM prior
+  training/                 # trainer and replay buffer
+  utils/                    # logging and KPI utilities
 
-train.py                  # training entry point
+train.py                    # training entry point
 requirements.txt
 ```
 
 ## Installation
 
-### Prerequisites
+Prerequisites:
 
 - Python 3.10+
-- SUMO installed and available in the runtime environment
+- SUMO installed and accessible from your runtime environment
 - CUDA-capable GPU recommended for training
 
-### Setup
+Setup:
 
 ```bash
 pip install -r requirements.txt
 python scripts/verify_install.py
 ```
 
-If verification passes, start training.
+If verification passes, proceed to training.
 
 ## Quick Start
 
@@ -85,29 +102,29 @@ python train.py --config configs/paper_robust.yaml
 
 ## Experiment Workflows
 
-### 1) Baseline + Ablations
+### Baseline + Ablations
 
 ```bash
 python scripts/run_ablations.py
 python scripts/resume_ablations.py
 ```
 
-### 2) Stress Robustness Evaluation
+### Stress Robustness Evaluation
 
 ```bash
 python scripts/stress_eval.py --episodes 20
 ```
 
-### 3) Diagnostics
+### Diagnostics
 
 ```bash
 python scripts/diagnose.py
 ```
 
-## Results Snapshot (Current Runs)
+## Results Snapshot
 
-The following values are from completed local runs and are intended as a quick
-reference for repository visitors:
+The following values are from completed local experiments and provided as a
+quick reference for repository visitors.
 
 | Experiment | Key Outcome |
 |---|---|
@@ -117,20 +134,20 @@ reference for repository visitors:
 | w/o LLM Prior | Best eval reward: 794.037 |
 | Robust paper config | Best eval reward: 456.387 at 120K |
 
-For full metrics and scenario breakdown, see generated files under `logs/`.
+For complete metrics and scenario breakdowns, see generated outputs under
+`logs/`.
 
 ## Reproducibility
 
 - Hyperparameters are versioned in `configs/*.yaml`
-- Major experiment scripts are under `scripts/`
-- Runtime artifacts (`logs/`, `checkpoints/`, `venv/`) are ignored by git
-- Use fixed seeds from config for repeatability
+- Experiment entry scripts are tracked under `scripts/`
+- Runtime artifacts (`logs/`, `checkpoints/`, `venv/`) are excluded via `.gitignore`
+- Fixed seeds are used via configuration files
 
-## Development Notes
+## Project Status
 
-- Main training logic: `vehicleformer/training/trainer.py`
-- Environment dynamics: `vehicleformer/env/icv_env.py`, `vehicleformer/env/network_sim.py`
-- Logging outputs: run-specific folders under `logs/`
+Active research repository for model development, benchmarking, and paper
+preparation.
 
 ## Citation
 
@@ -139,4 +156,4 @@ paper once published.
 
 ## License
 
-Add your license file before broader distribution.
+Add a license file before broader external distribution.

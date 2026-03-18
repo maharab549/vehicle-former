@@ -1,75 +1,73 @@
 ﻿# VehicleFormer
 
-Graph-Augmented Causal Transformer with world-model-assisted reinforcement
-learning for multi-network Intelligent Connected Vehicle (ICV) systems.
+Graph-Augmented RL framework for robust communication orchestration in
+Intelligent Connected Vehicle (ICV) systems.
 
-## Overview
+## What This Project Does
 
-VehicleFormer is an end-to-end research codebase for training and evaluating
-network orchestration policies across 5G, C-V2X, and satellite links in SUMO.
-The framework combines:
+VehicleFormer trains and evaluates policies that decide how vehicles use
+multi-network connectivity (5G, C-V2X, satellite) under latency and reliability
+constraints in a SUMO simulation environment.
 
-- Heterogeneous graph encoding (HetGNN)
-- Soft Actor-Critic (SAC) control
-- World model auxiliary learning
-- Optional LLM prior regularization
-- Stress-test evaluation scenarios for robustness analysis
+Core stack:
 
-## Project Structure
+- HetGNN for heterogeneous graph state encoding
+- SAC for policy optimization
+- Optional world-model auxiliary learning
+- Optional LLM-prior regularization
+- Stress-test benchmarking for robustness
 
-```
-vehicleformer/
-  configs/
-    default.yaml
-    paper_robust.yaml
-  data/sumo/
-  scripts/
-    create_sumo_scenario.py
-    verify_install.py
-    run_ablations.py
-    resume_ablations.py
-    stress_eval.py
-  vehicleformer/
-    env/
-    models/
-    training/
-    utils/
-  train.py
-  requirements.txt
+## Highlights
+
+- End-to-end train/eval pipeline for network selection + control actions
+- Reproducible ablation workflows
+- Robustness scenarios: outages, congestion bursts, sparse V2X coverage
+- Paper-focused config included (`configs/paper_robust.yaml`)
+
+## Project Layout
+
+```text
+configs/                 # experiment configs
+data/sumo/               # SUMO scenario assets
+scripts/                 # setup, ablation, stress-eval utilities
+vehicleformer/env/       # SUMO bridge + network environment
+vehicleformer/models/    # HetGNN, SAC, world model, LLM prior
+vehicleformer/training/  # trainer + replay buffer
+vehicleformer/utils/     # logging + metrics
+train.py                 # entry point
 ```
 
 ## Quick Start
 
 ```bash
-# 1) Create and activate your Python environment
-
-# 2) Install dependencies
 pip install -r requirements.txt
-
-# 3) Verify setup
 python scripts/verify_install.py
-
-# 4) Train default configuration
 python train.py --config configs/default.yaml
 ```
 
-## Reproducibility Commands
+## Common Commands
 
 ```bash
+# Main training
+python train.py --config configs/default.yaml
+
+# Robust paper training
+python train.py --config configs/paper_robust.yaml
+
 # Ablations
 python scripts/run_ablations.py
 python scripts/resume_ablations.py
 
 # Stress evaluation
 python scripts/stress_eval.py --episodes 20
-
-# Robust paper-focused run
-python train.py --config configs/paper_robust.yaml
 ```
 
 ## Notes
 
-- Large artifacts (logs, checkpoints, virtual environments) are ignored via
-  `.gitignore`.
-- Use `configs/paper_robust.yaml` for the final robustness-focused training
-  protocol.
+- Runtime artifacts are excluded from git (`logs/`, `checkpoints/`, `venv/`).
+- For publication experiments, prefer `configs/paper_robust.yaml`.
+
+## Citation
+
+If this repository helps your research, please cite the corresponding paper
+when available.

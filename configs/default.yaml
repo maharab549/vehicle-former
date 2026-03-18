@@ -1,0 +1,199 @@
+# ═══════════════════════════════════════════════════════════════════════
+# VehicleFormer Default Configuration
+# ═══════════════════════════════════════════════════════════════════════
+
+project:
+  name: "VehicleFormer"
+  version: "1.0.0"
+  seed: 42
+  device: "cuda"              # "cuda" or "cpu"
+  log_dir: "logs"
+  checkpoint_dir: "checkpoints"
+  use_wandb: false            # Set true to enable Weights & Biases
+
+# ─── Simulation ─────────────────────────────────────────────────────────
+simulation:
+  sumo_cfg: "data/sumo/massive_traffic.sumocfg"
+  use_gui: false              # Set true to see SUMO GUI (slow)
+  step_length: 0.1            # seconds per SUMO step
+  max_episode_steps: 1000     # steps per episode (doubled for complex scenario)
+  num_vehicles: 50            # vehicles tracked per episode (scaled up)
+
+  # Network infrastructure positions (x, y in SUMO coordinates)
+  base_stations_5g:           # 5G base stations (8 for full grid coverage)
+    - [100, 100]
+    - [300, 100]
+    - [500, 100]
+    - [700, 100]
+    - [100, 700]
+    - [300, 700]
+    - [500, 700]
+    - [700, 700]
+  rsu_positions:              # C-V2X RSUs at 4 key intersections (sparse coverage)
+    - [200, 200]
+    - [600, 200]
+    - [200, 600]
+    - [600, 600]
+
+# ─── Observation Space ──────────────────────────────────────────────────
+observation:
+  # Per-vehicle features (node features in graph)
+  vehicle_features:
+    - "position_x"            # normalized [0,1]
+    - "position_y"
+    - "speed"                 # m/s normalized
+    - "heading"               # degrees normalized
+    - "rssi_5g"               # dBm normalized
+    - "rssi_v2x"              # dBm normalized
+    - "sat_latency"           # ms normalized
+    - "edge_load"             # [0,1]
+    - "task_size"             # MB normalized
+    - "deadline_remaining"    # ms normalized
+    - "battery_level"         # [0,1]
+    - "current_network"       # one-hot: [5G, V2X, SAT]
+
+  # Per-RSU features
+  rsu_features:
+    - "position_x"
+    - "position_y"
+    - "connected_vehicles"
+    - "channel_quality"
+    - "load"
+
+  # Per-base-station features
+  bs_features:
+    - "position_x"
+    - "position_y"
+    - "frequency_band"
+    - "load"
+    - "coverage_radius"
+    - "latency_mean"
+
+  vehicle_dim: 14             # len(vehicle_features) = 11 scalar + 3 one-hot network
+  rsu_dim: 5
+  bs_dim: 6
+  satellite_dim: 4            # [altitude, latency, coverage, bandwidth]
+  max_vehicles: 50
+  max_rsus: 4
+  max_base_stations: 8
+  max_satellites: 1
+  history_len: 10             # time steps of history for world model
+
+# ─── Action Space ───────────────────────────────────────────────────────
+action:
+  # Discrete actions for network selection
+  network_choices: ["5G", "V2X", "SATELLITE", "5G+V2X"]
+  # Continuous actions
+  tx_power_min: 0.1           # watts
+  tx_power_max: 2.0
+  offload_ratio_min: 0.0      # fraction offloaded to edge
+  offload_ratio_max: 1.0
+  action_dim: 6               # [net_select(4), tx_power, offload_ratio]
+
+# ─── Reward ─────────────────────────────────────────────────────────────
+reward:
+  # Weights for multi-objective reward
+  w_latency: 0.35             # penalize high latency
+  w_reliability: 0.30         # reward meeting SLA (50ms@99%)
+  w_energy: 0.15              # penalize energy use
+  w_coverage: 0.20            # reward successful connection
+
+  # SLA targets (from China ICV Roadmap 2025-2030)
+  latency_target_ms: 50.0     # 50ms@99% target
+  reliability_target: 0.99    # 99th percentile
+  v2x_latency_target_ms: 30.0 # V2X average latency target
+
+# ─── HetGNN ─────────────────────────────────────────────────────────────
+hetgnn:
+  hidden_dim: 256
+  num_layers: 3
+  num_heads: 8                # multi-head attention per layer
+  dropout: 0.1
+  embedding_dim: 256          # final node embedding size
+  edge_dim: 16                # edge feature dimension
+  # Edge types: vehicle-vehicle, vehicle-rsu, vehicle-bs, vehicle-satellite
+  edge_types:
+    - ["vehicle", "v2v", "vehicle"]
+    - ["vehicle", "v2i", "rsu"]
+    - ["vehicle", "v2n", "base_station"]
+    - ["vehicle", "v2s", "satellite"]
+
+# ─── World Model (Causal Transformer) ───────────────────────────────────
+world_model:
+  d_model: 256                # must match hetgnn.embedding_dim
+  nhead: 8
+  num_encoder_layers: 4
+  num_decoder_layers: 2
+  dim_feedforward: 1024
+  dropout: 0.1
+  max_seq_len: 10             # history_len
+  prediction_horizon: 5       # predict 5 steps ahead
+  num_ensemble: 3             # ensemble for uncertainty quantification
+
+# ─── LLM Prior ──────────────────────────────────────────────────────────
+llm_prior:
+  model_name: "microsoft/Phi-3-mini-4k-instruct"
+  load_in_4bit: false         # skip 4-bit (bitsandbytes not available on Windows)
+  lora_rank: 16               # LoRA fine-tuning rank
+  lora_alpha: 32
+  lora_dropout: 0.05
+  target_modules: ["qkv_proj", "o_proj"]
+  kl_weight: 0.1              # λ in π* = argmax[E[R] - λ·D_KL(π||π_LLM)]
+  update_frequency: 500       # update LLM prior every N steps
+  inference_frequency: 10     # compute LLM log_prob every N steps (cache between)
+  enabled: true               # ← LLM Prior ENABLED
+
+# ─── SAC Agent ──────────────────────────────────────────────────────────
+sac:
+  actor_lr: 3.0e-4
+  critic_lr: 3.0e-4
+  alpha_lr: 3.0e-4
+  gamma: 0.99                 # discount factor
+  tau: 0.005                  # soft update coefficient
+  alpha: 0.2                  # initial entropy temperature
+  auto_alpha: true            # automatically tune alpha
+  hidden_dims: [512, 256, 128]
+  batch_size: 256
+  gradient_steps: 1
+  target_update_interval: 1
+  # Physics constraints (from roadmap KPIs)
+  max_latency_ms: 100.0       # hard constraint
+  min_reliability: 0.95       # hard constraint
+
+# ─── Replay Buffer ──────────────────────────────────────────────────────
+replay_buffer:
+  capacity: 500000
+  min_size: 2000              # minimum transitions before training
+
+# ─── Training ───────────────────────────────────────────────────────────
+training:
+  total_timesteps: 300000
+  eval_frequency: 25000       # evaluate every N steps
+  save_frequency: 50000       # save checkpoint every N steps
+  log_frequency: 500          # log metrics every N steps
+  num_eval_episodes: 5
+  warm_up_steps: 5000         # random actions before training
+  world_model_pretrain_steps: 20000  # pretrain world model first
+
+# ─── Federated Learning ─────────────────────────────────────────────────
+federated:
+  enabled: false              # ← Enable after single-agent works
+  num_clients: 10             # simulated vehicle clients
+  rounds: 100
+  local_steps: 50
+  aggregation: "fedprox"      # "fedavg" or "fedprox"
+  fedprox_mu: 0.01
+  differential_privacy: true
+  dp_epsilon: 1.0
+  dp_delta: 1.0e-5
+  dp_max_grad_norm: 1.0
+
+# ─── GPU Memory Budget (RTX 5070 Ti 16GB) ───────────────────────────────
+gpu_memory:
+  hetgnn_gb: 2.0
+  world_model_gb: 3.2
+  llm_prior_gb: 7.6           # Phi-3-mini fp16
+  sac_agent_gb: 1.0
+  replay_buffer_gb: 3.0
+  total_used_gb: 13.9
+  free_gb: 2.1

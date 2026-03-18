@@ -1,0 +1,203 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<routes>
+    <!-- ═══════════════════════════════════════════════════════════════
+         MASSIVE URBAN TRAFFIC SCENARIO — VehicleFormer Full Training
+         ~3000+ vehicles/hour across 5x5 grid with bidirectional flow
+         Peak hour patterns, mixed vehicle types, emergency vehicles
+         ═══════════════════════════════════════════════════════════════ -->
+
+    <!-- Vehicle Types -->
+    <vType id="passenger"  accel="2.6" decel="4.5" length="4.5" maxSpeed="13.89"
+           sigma="0.5" speedFactor="normc(1.0,0.1,0.7,1.3)" color="0,0,255"
+           minGap="2.5" tau="1.0"/>
+    <vType id="suv"        accel="2.2" decel="4.0" length="5.0" maxSpeed="13.89"
+           sigma="0.5" speedFactor="normc(1.0,0.1,0.7,1.3)" color="100,100,255"
+           minGap="2.5" tau="1.0"/>
+    <vType id="truck"      accel="1.3" decel="3.5" length="12.0" maxSpeed="11.11"
+           sigma="0.3" speedFactor="normc(0.85,0.1,0.6,1.0)" color="255,0,0"
+           minGap="3.0" tau="1.5"/>
+    <vType id="bus"        accel="1.8" decel="4.0" length="12.0" maxSpeed="11.11"
+           sigma="0.2" speedFactor="normc(0.9,0.05,0.8,1.0)" color="0,200,0"
+           minGap="3.0" tau="1.2"/>
+    <vType id="emergency"  accel="3.5" decel="5.5" length="5.5" maxSpeed="22.22"
+           sigma="0.1" speedFactor="1.5" color="255,0,0"
+           minGap="2.0" tau="0.8" speedDev="0.0" vClass="emergency"/>
+    <vType id="motorcycle" accel="4.0" decel="6.0" length="2.2" maxSpeed="16.67"
+           sigma="0.6" speedFactor="normc(1.1,0.15,0.8,1.5)" color="255,165,0"
+           minGap="1.5" tau="0.8"/>
+    <vType id="delivery"   accel="2.0" decel="4.0" length="6.0" maxSpeed="11.11"
+           sigma="0.3" speedFactor="normc(0.9,0.1,0.7,1.1)" color="139,69,19"
+           minGap="2.5" tau="1.2"/>
+
+    <!-- ═══ FORWARD HORIZONTAL ROUTES (West → East) ═══ -->
+    <route id="route_h0_fwd" edges="e00_01 e01_02 e02_03 e03_04"/>
+    <route id="route_h1_fwd" edges="e10_11 e11_12 e12_13 e13_14"/>
+    <route id="route_h2_fwd" edges="e20_21 e21_22 e22_23 e23_24"/>
+    <route id="route_h3_fwd" edges="e30_31 e31_32 e32_33 e33_34"/>
+    <route id="route_h4_fwd" edges="e40_41 e41_42 e42_43 e43_44"/>
+
+    <!-- ═══ REVERSE HORIZONTAL ROUTES (East → West) ═══ -->
+    <route id="route_h0_rev" edges="e04_03 e03_02 e02_01 e01_00"/>
+    <route id="route_h1_rev" edges="e14_13 e13_12 e12_11 e11_10"/>
+    <route id="route_h2_rev" edges="e24_23 e23_22 e22_21 e21_20"/>
+    <route id="route_h3_rev" edges="e34_33 e33_32 e32_31 e31_30"/>
+    <route id="route_h4_rev" edges="e44_43 e43_42 e42_41 e41_40"/>
+
+    <!-- ═══ FORWARD VERTICAL ROUTES (South → North) ═══ -->
+    <route id="route_v0_fwd" edges="e00_10 e10_20 e20_30 e30_40"/>
+    <route id="route_v1_fwd" edges="e01_11 e11_21 e21_31 e31_41"/>
+    <route id="route_v2_fwd" edges="e02_12 e12_22 e22_32 e32_42"/>
+    <route id="route_v3_fwd" edges="e03_13 e13_23 e23_33 e33_43"/>
+    <route id="route_v4_fwd" edges="e04_14 e14_24 e24_34 e34_44"/>
+
+    <!-- ═══ REVERSE VERTICAL ROUTES (North → South) ═══ -->
+    <route id="route_v0_rev" edges="e40_30 e30_20 e20_10 e10_00"/>
+    <route id="route_v1_rev" edges="e41_31 e31_21 e21_11 e11_01"/>
+    <route id="route_v2_rev" edges="e42_32 e32_22 e22_12 e12_02"/>
+    <route id="route_v3_rev" edges="e43_33 e33_23 e23_13 e13_03"/>
+    <route id="route_v4_rev" edges="e44_34 e34_24 e24_14 e14_04"/>
+
+    <!-- ═══ CROSS-ROUTES (L-shaped, through center) ═══ -->
+    <route id="route_cross_1" edges="e00_01 e01_02 e02_12 e12_22 e22_32 e32_42"/>
+    <route id="route_cross_2" edges="e00_10 e10_20 e20_21 e21_22 e22_23 e23_24"/>
+    <route id="route_cross_3" edges="e04_03 e03_02 e02_12 e12_22 e22_32 e32_42"/>
+    <route id="route_cross_4" edges="e44_34 e34_24 e24_23 e23_22 e22_21 e21_20"/>
+    <route id="route_cross_5" edges="e40_30 e30_31 e31_32 e32_33 e33_34"/>
+    <route id="route_cross_6" edges="e04_14 e14_13 e13_12 e12_11 e11_10"/>
+    <route id="route_cross_7" edges="e00_01 e01_11 e11_21 e21_22 e22_23 e23_24"/>
+    <route id="route_cross_8" edges="e44_43 e43_33 e33_23 e23_22 e22_21 e21_20"/>
+
+    <!-- ═══ DIAGONAL-ISH ROUTES (zigzag through grid) ═══ -->
+    <route id="route_diag_1" edges="e00_01 e01_11 e11_12 e12_22 e22_23 e23_33 e33_34"/>
+    <route id="route_diag_2" edges="e40_30 e30_31 e31_21 e21_22 e22_12 e12_13 e13_14"/>
+    <route id="route_diag_3" edges="e04_03 e03_13 e13_12 e12_22 e22_21 e21_31 e31_41"/>
+    <route id="route_diag_4" edges="e44_43 e43_33 e33_32 e32_22 e22_12 e12_02"/>
+
+    <!-- ═══════════════════════════════════════════════════════════════
+         TRAFFIC FLOWS — 3 PHASES: Off-Peak / Rush Hour / Off-Peak
+         ═══════════════════════════════════════════════════════════════ -->
+
+    <!-- ─── PHASE 1: Early off-peak (0—600s, ~moderate) ─────────────── -->
+    <!-- Forward horizontal -->
+    <flow id="ph1_h0f" type="passenger"  route="route_h0_fwd" begin="0" end="600" vehsPerHour="200"/>
+    <flow id="ph1_h1f" type="passenger"  route="route_h1_fwd" begin="0" end="600" vehsPerHour="180"/>
+    <flow id="ph1_h2f" type="passenger"  route="route_h2_fwd" begin="0" end="600" vehsPerHour="250"/>
+    <flow id="ph1_h3f" type="suv"        route="route_h3_fwd" begin="0" end="600" vehsPerHour="150"/>
+    <flow id="ph1_h4f" type="passenger"  route="route_h4_fwd" begin="0" end="600" vehsPerHour="130"/>
+    <!-- Reverse horizontal -->
+    <flow id="ph1_h0r" type="passenger"  route="route_h0_rev" begin="0" end="600" vehsPerHour="160"/>
+    <flow id="ph1_h1r" type="suv"        route="route_h1_rev" begin="0" end="600" vehsPerHour="140"/>
+    <flow id="ph1_h2r" type="passenger"  route="route_h2_rev" begin="0" end="600" vehsPerHour="200"/>
+    <flow id="ph1_h3r" type="passenger"  route="route_h3_rev" begin="0" end="600" vehsPerHour="120"/>
+    <flow id="ph1_h4r" type="passenger"  route="route_h4_rev" begin="0" end="600" vehsPerHour="100"/>
+    <!-- Forward vertical -->
+    <flow id="ph1_v0f" type="passenger"  route="route_v0_fwd" begin="0" end="600" vehsPerHour="180"/>
+    <flow id="ph1_v1f" type="passenger"  route="route_v1_fwd" begin="0" end="600" vehsPerHour="200"/>
+    <flow id="ph1_v2f" type="suv"        route="route_v2_fwd" begin="0" end="600" vehsPerHour="170"/>
+    <flow id="ph1_v3f" type="passenger"  route="route_v3_fwd" begin="0" end="600" vehsPerHour="120"/>
+    <flow id="ph1_v4f" type="passenger"  route="route_v4_fwd" begin="0" end="600" vehsPerHour="140"/>
+    <!-- Reverse vertical -->
+    <flow id="ph1_v0r" type="passenger"  route="route_v0_rev" begin="0" end="600" vehsPerHour="150"/>
+    <flow id="ph1_v1r" type="passenger"  route="route_v1_rev" begin="0" end="600" vehsPerHour="160"/>
+    <flow id="ph1_v2r" type="passenger"  route="route_v2_rev" begin="0" end="600" vehsPerHour="140"/>
+    <flow id="ph1_v3r" type="passenger"  route="route_v3_rev" begin="0" end="600" vehsPerHour="100"/>
+    <flow id="ph1_v4r" type="suv"        route="route_v4_rev" begin="0" end="600" vehsPerHour="110"/>
+    <!-- Cross/diagonal -->
+    <flow id="ph1_c1"  type="passenger"  route="route_cross_1" begin="0" end="600" vehsPerHour="80"/>
+    <flow id="ph1_c2"  type="passenger"  route="route_cross_2" begin="0" end="600" vehsPerHour="70"/>
+    <flow id="ph1_c3"  type="delivery"   route="route_cross_3" begin="0" end="600" vehsPerHour="40"/>
+    <flow id="ph1_d1"  type="motorcycle" route="route_diag_1"  begin="0" end="600" vehsPerHour="60"/>
+    <flow id="ph1_d2"  type="motorcycle" route="route_diag_2"  begin="0" end="600" vehsPerHour="50"/>
+    <!-- Trucks and buses -->
+    <flow id="ph1_trk1" type="truck"     route="route_h2_fwd" begin="0" end="600" vehsPerHour="40"/>
+    <flow id="ph1_trk2" type="truck"     route="route_v2_fwd" begin="0" end="600" vehsPerHour="30"/>
+    <flow id="ph1_bus1" type="bus"       route="route_h2_fwd" begin="0" end="600" vehsPerHour="20"/>
+    <flow id="ph1_bus2" type="bus"       route="route_v2_fwd" begin="0" end="600" vehsPerHour="15"/>
+
+    <!-- ─── PHASE 2: RUSH HOUR (600—2400s, ~HEAVY traffic) ──────────── -->
+    <!-- Forward horizontal — HEAVY -->
+    <flow id="ph2_h0f" type="passenger"  route="route_h0_fwd" begin="600" end="2400" vehsPerHour="400"/>
+    <flow id="ph2_h1f" type="passenger"  route="route_h1_fwd" begin="600" end="2400" vehsPerHour="380"/>
+    <flow id="ph2_h2f" type="passenger"  route="route_h2_fwd" begin="600" end="2400" vehsPerHour="500"/>
+    <flow id="ph2_h3f" type="suv"        route="route_h3_fwd" begin="600" end="2400" vehsPerHour="320"/>
+    <flow id="ph2_h4f" type="passenger"  route="route_h4_fwd" begin="600" end="2400" vehsPerHour="280"/>
+    <!-- Reverse horizontal — HEAVY -->
+    <flow id="ph2_h0r" type="passenger"  route="route_h0_rev" begin="600" end="2400" vehsPerHour="350"/>
+    <flow id="ph2_h1r" type="suv"        route="route_h1_rev" begin="600" end="2400" vehsPerHour="300"/>
+    <flow id="ph2_h2r" type="passenger"  route="route_h2_rev" begin="600" end="2400" vehsPerHour="450"/>
+    <flow id="ph2_h3r" type="passenger"  route="route_h3_rev" begin="600" end="2400" vehsPerHour="260"/>
+    <flow id="ph2_h4r" type="passenger"  route="route_h4_rev" begin="600" end="2400" vehsPerHour="220"/>
+    <!-- Forward vertical — HEAVY -->
+    <flow id="ph2_v0f" type="passenger"  route="route_v0_fwd" begin="600" end="2400" vehsPerHour="360"/>
+    <flow id="ph2_v1f" type="passenger"  route="route_v1_fwd" begin="600" end="2400" vehsPerHour="400"/>
+    <flow id="ph2_v2f" type="suv"        route="route_v2_fwd" begin="600" end="2400" vehsPerHour="340"/>
+    <flow id="ph2_v3f" type="passenger"  route="route_v3_fwd" begin="600" end="2400" vehsPerHour="250"/>
+    <flow id="ph2_v4f" type="passenger"  route="route_v4_fwd" begin="600" end="2400" vehsPerHour="280"/>
+    <!-- Reverse vertical — HEAVY -->
+    <flow id="ph2_v0r" type="passenger"  route="route_v0_rev" begin="600" end="2400" vehsPerHour="320"/>
+    <flow id="ph2_v1r" type="passenger"  route="route_v1_rev" begin="600" end="2400" vehsPerHour="350"/>
+    <flow id="ph2_v2r" type="passenger"  route="route_v2_rev" begin="600" end="2400" vehsPerHour="300"/>
+    <flow id="ph2_v3r" type="passenger"  route="route_v3_rev" begin="600" end="2400" vehsPerHour="220"/>
+    <flow id="ph2_v4r" type="suv"        route="route_v4_rev" begin="600" end="2400" vehsPerHour="240"/>
+    <!-- Cross-routes — HEAVY -->
+    <flow id="ph2_c1"  type="passenger"  route="route_cross_1" begin="600" end="2400" vehsPerHour="180"/>
+    <flow id="ph2_c2"  type="passenger"  route="route_cross_2" begin="600" end="2400" vehsPerHour="160"/>
+    <flow id="ph2_c3"  type="delivery"   route="route_cross_3" begin="600" end="2400" vehsPerHour="100"/>
+    <flow id="ph2_c4"  type="passenger"  route="route_cross_4" begin="600" end="2400" vehsPerHour="150"/>
+    <flow id="ph2_c5"  type="suv"        route="route_cross_5" begin="600" end="2400" vehsPerHour="130"/>
+    <flow id="ph2_c6"  type="passenger"  route="route_cross_6" begin="600" end="2400" vehsPerHour="120"/>
+    <flow id="ph2_c7"  type="passenger"  route="route_cross_7" begin="600" end="2400" vehsPerHour="140"/>
+    <flow id="ph2_c8"  type="passenger"  route="route_cross_8" begin="600" end="2400" vehsPerHour="110"/>
+    <!-- Diagonal — HEAVY -->
+    <flow id="ph2_d1"  type="motorcycle" route="route_diag_1"  begin="600" end="2400" vehsPerHour="120"/>
+    <flow id="ph2_d2"  type="motorcycle" route="route_diag_2"  begin="600" end="2400" vehsPerHour="100"/>
+    <flow id="ph2_d3"  type="passenger"  route="route_diag_3"  begin="600" end="2400" vehsPerHour="90"/>
+    <flow id="ph2_d4"  type="passenger"  route="route_diag_4"  begin="600" end="2400" vehsPerHour="80"/>
+    <!-- Trucks and buses — HEAVY -->
+    <flow id="ph2_trk1" type="truck"     route="route_h2_fwd" begin="600" end="2400" vehsPerHour="80"/>
+    <flow id="ph2_trk2" type="truck"     route="route_v2_fwd" begin="600" end="2400" vehsPerHour="60"/>
+    <flow id="ph2_trk3" type="truck"     route="route_h2_rev" begin="600" end="2400" vehsPerHour="50"/>
+    <flow id="ph2_trk4" type="truck"     route="route_h0_fwd" begin="600" end="2400" vehsPerHour="40"/>
+    <flow id="ph2_bus1" type="bus"       route="route_h2_fwd" begin="600" end="2400" vehsPerHour="30"/>
+    <flow id="ph2_bus2" type="bus"       route="route_v2_fwd" begin="600" end="2400" vehsPerHour="25"/>
+    <flow id="ph2_bus3" type="bus"       route="route_h1_fwd" begin="600" end="2400" vehsPerHour="20"/>
+    <flow id="ph2_bus4" type="bus"       route="route_v1_fwd" begin="600" end="2400" vehsPerHour="20"/>
+    <!-- Delivery vehicles burst -->
+    <flow id="ph2_del1" type="delivery"  route="route_cross_1" begin="600" end="2400" vehsPerHour="60"/>
+    <flow id="ph2_del2" type="delivery"  route="route_cross_4" begin="600" end="2400" vehsPerHour="50"/>
+    <flow id="ph2_del3" type="delivery"  route="route_diag_1"  begin="600" end="2400" vehsPerHour="40"/>
+
+    <!-- ─── PHASE 3: Evening off-peak (2400—3600s, winding down) ──── -->
+    <flow id="ph3_h0f" type="passenger"  route="route_h0_fwd" begin="2400" end="3600" vehsPerHour="180"/>
+    <flow id="ph3_h1f" type="passenger"  route="route_h1_fwd" begin="2400" end="3600" vehsPerHour="150"/>
+    <flow id="ph3_h2f" type="passenger"  route="route_h2_fwd" begin="2400" end="3600" vehsPerHour="220"/>
+    <flow id="ph3_h3f" type="suv"        route="route_h3_fwd" begin="2400" end="3600" vehsPerHour="120"/>
+    <flow id="ph3_h4f" type="passenger"  route="route_h4_fwd" begin="2400" end="3600" vehsPerHour="110"/>
+    <flow id="ph3_h0r" type="passenger"  route="route_h0_rev" begin="2400" end="3600" vehsPerHour="200"/>
+    <flow id="ph3_h2r" type="passenger"  route="route_h2_rev" begin="2400" end="3600" vehsPerHour="240"/>
+    <flow id="ph3_h4r" type="suv"        route="route_h4_rev" begin="2400" end="3600" vehsPerHour="130"/>
+    <flow id="ph3_v0f" type="passenger"  route="route_v0_fwd" begin="2400" end="3600" vehsPerHour="160"/>
+    <flow id="ph3_v1f" type="passenger"  route="route_v1_fwd" begin="2400" end="3600" vehsPerHour="170"/>
+    <flow id="ph3_v2f" type="passenger"  route="route_v2_fwd" begin="2400" end="3600" vehsPerHour="150"/>
+    <flow id="ph3_v3f" type="passenger"  route="route_v3_fwd" begin="2400" end="3600" vehsPerHour="100"/>
+    <flow id="ph3_v0r" type="passenger"  route="route_v0_rev" begin="2400" end="3600" vehsPerHour="140"/>
+    <flow id="ph3_v2r" type="passenger"  route="route_v2_rev" begin="2400" end="3600" vehsPerHour="160"/>
+    <flow id="ph3_v4r" type="passenger"  route="route_v4_rev" begin="2400" end="3600" vehsPerHour="120"/>
+    <flow id="ph3_c1"  type="passenger"  route="route_cross_1" begin="2400" end="3600" vehsPerHour="60"/>
+    <flow id="ph3_c4"  type="passenger"  route="route_cross_4" begin="2400" end="3600" vehsPerHour="50"/>
+    <flow id="ph3_d1"  type="motorcycle" route="route_diag_1"  begin="2400" end="3600" vehsPerHour="40"/>
+    <flow id="ph3_trk1" type="truck"     route="route_h2_fwd" begin="2400" end="3600" vehsPerHour="30"/>
+    <flow id="ph3_bus1" type="bus"       route="route_h2_fwd" begin="2400" end="3600" vehsPerHour="15"/>
+
+    <!-- ─── EMERGENCY VEHICLES (sporadic throughout) ─────────────── -->
+    <vehicle id="emer_1"  type="emergency" route="route_h2_fwd" depart="120"/>
+    <vehicle id="emer_2"  type="emergency" route="route_v2_fwd" depart="450"/>
+    <vehicle id="emer_3"  type="emergency" route="route_cross_1" depart="800"/>
+    <vehicle id="emer_4"  type="emergency" route="route_h0_rev" depart="1100"/>
+    <vehicle id="emer_5"  type="emergency" route="route_diag_1" depart="1500"/>
+    <vehicle id="emer_6"  type="emergency" route="route_v4_rev" depart="1800"/>
+    <vehicle id="emer_7"  type="emergency" route="route_cross_4" depart="2100"/>
+    <vehicle id="emer_8"  type="emergency" route="route_h3_fwd" depart="2500"/>
+    <vehicle id="emer_9"  type="emergency" route="route_v1_rev" depart="2900"/>
+    <vehicle id="emer_10" type="emergency" route="route_cross_8" depart="3200"/>
+</routes>

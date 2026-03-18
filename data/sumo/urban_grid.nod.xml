@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<nodes>
+    <!-- 5x5 grid = 25 intersections, 200m spacing -->
+    <node id="n00" x="0"    y="0"    type="traffic_light"/>
+    <node id="n01" x="200"  y="0"    type="traffic_light"/>
+    <node id="n02" x="400"  y="0"    type="traffic_light"/>
+    <node id="n03" x="600"  y="0"    type="traffic_light"/>
+    <node id="n04" x="800"  y="0"    type="traffic_light"/>
+    <node id="n10" x="0"    y="200"  type="traffic_light"/>
+    <node id="n11" x="200"  y="200"  type="traffic_light"/>
+    <node id="n12" x="400"  y="200"  type="traffic_light"/>
+    <node id="n13" x="600"  y="200"  type="traffic_light"/>
+    <node id="n14" x="800"  y="200"  type="traffic_light"/>
+    <node id="n20" x="0"    y="400"  type="traffic_light"/>
+    <node id="n21" x="200"  y="400"  type="traffic_light"/>
+    <node id="n22" x="400"  y="400"  type="traffic_light"/>
+    <node id="n23" x="600"  y="400"  type="traffic_light"/>
+    <node id="n24" x="800"  y="400"  type="traffic_light"/>
+    <node id="n30" x="0"    y="600"  type="traffic_light"/>
+    <node id="n31" x="200"  y="600"  type="traffic_light"/>
+    <node id="n32" x="400"  y="600"  type="traffic_light"/>
+    <node id="n33" x="600"  y="600"  type="traffic_light"/>
+    <node id="n34" x="800"  y="600"  type="traffic_light"/>
+    <node id="n40" x="0"    y="800"  type="traffic_light"/>
+    <node id="n41" x="200"  y="800"  type="traffic_light"/>
+    <node id="n42" x="400"  y="800"  type="traffic_light"/>
+    <node id="n43" x="600"  y="800"  type="traffic_light"/>
+    <node id="n44" x="800"  y="800"  type="traffic_light"/>
+</nodes>

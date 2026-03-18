@@ -1,0 +1,182 @@
+# ═══════════════════════════════════════════════════════════════════════
+# VehicleFormer Robust Paper Configuration
+# Separate from default.yaml so previous experiments remain reproducible.
+# ═══════════════════════════════════════════════════════════════════════
+
+project:
+  name: "VehicleFormer"
+  version: "paper-robust-v1"
+  seed: 42
+  device: "cuda"
+  log_dir: "logs/paper_robust"
+  checkpoint_dir: "checkpoints/paper_robust"
+  use_wandb: false
+
+simulation:
+  sumo_cfg: "data/sumo/massive_traffic.sumocfg"
+  use_gui: false
+  step_length: 0.1
+  max_episode_steps: 1000
+  num_vehicles: 50
+  base_stations_5g:
+    - [100, 100]
+    - [300, 100]
+    - [500, 100]
+    - [700, 100]
+    - [100, 700]
+    - [300, 700]
+    - [500, 700]
+    - [700, 700]
+  rsu_positions:
+    - [200, 200]
+    - [600, 200]
+    - [200, 600]
+    - [600, 600]
+
+observation:
+  vehicle_features:
+    - "position_x"
+    - "position_y"
+    - "speed"
+    - "heading"
+    - "rssi_5g"
+    - "rssi_v2x"
+    - "sat_latency"
+    - "edge_load"
+    - "task_size"
+    - "deadline_remaining"
+    - "battery_level"
+    - "current_network"
+  rsu_features:
+    - "position_x"
+    - "position_y"
+    - "connected_vehicles"
+    - "channel_quality"
+    - "load"
+  bs_features:
+    - "position_x"
+    - "position_y"
+    - "frequency_band"
+    - "load"
+    - "coverage_radius"
+    - "latency_mean"
+  vehicle_dim: 14
+  rsu_dim: 5
+  bs_dim: 6
+  satellite_dim: 4
+  max_vehicles: 50
+  max_rsus: 4
+  max_base_stations: 8
+  max_satellites: 1
+  history_len: 10
+
+action:
+  network_choices: ["5G", "V2X", "SATELLITE", "5G+V2X"]
+  tx_power_min: 0.1
+  tx_power_max: 2.0
+  offload_ratio_min: 0.0
+  offload_ratio_max: 1.0
+  action_dim: 6
+
+reward:
+  mode: "robust_paper"
+  w_latency: 0.30
+  w_sla30: 0.25
+  w_reliability: 0.15
+  w_throughput: 0.15
+  w_stability: 0.10
+  w_energy: 0.05
+  latency_target_ms: 50.0
+  reliability_target: 0.99
+  v2x_latency_target_ms: 30.0
+  disconnect_penalty: -15.0
+  handover_penalty_bad: -0.9
+  handover_penalty_good: -0.2
+  handover_improvement_ms: 5.0
+  throughput_norm_mbps: 200.0
+  stability_scale_ms: 12.0
+
+hetgnn:
+  hidden_dim: 256
+  num_layers: 3
+  num_heads: 8
+  dropout: 0.1
+  embedding_dim: 256
+  edge_dim: 16
+  edge_types:
+    - ["vehicle", "v2v", "vehicle"]
+    - ["vehicle", "v2i", "rsu"]
+    - ["vehicle", "v2n", "base_station"]
+    - ["vehicle", "v2s", "satellite"]
+
+world_model:
+  d_model: 256
+  nhead: 8
+  num_encoder_layers: 4
+  num_decoder_layers: 2
+  dim_feedforward: 1024
+  dropout: 0.1
+  max_seq_len: 10
+  prediction_horizon: 5
+  num_ensemble: 3
+
+llm_prior:
+  model_name: "microsoft/Phi-3-mini-4k-instruct"
+  load_in_4bit: false
+  lora_rank: 16
+  lora_alpha: 32
+  lora_dropout: 0.05
+  target_modules: ["qkv_proj", "o_proj"]
+  kl_weight: 0.15
+  update_frequency: 500
+  inference_frequency: 10
+  enabled: true
+
+sac:
+  actor_lr: 3.0e-4
+  critic_lr: 3.0e-4
+  alpha_lr: 3.0e-4
+  gamma: 0.99
+  tau: 0.005
+  alpha: 0.2
+  auto_alpha: true
+  hidden_dims: [512, 256, 128]
+  batch_size: 256
+  gradient_steps: 1
+  target_update_interval: 1
+  max_latency_ms: 100.0
+  min_reliability: 0.95
+
+replay_buffer:
+  capacity: 500000
+  min_size: 2000
+
+training:
+  total_timesteps: 200000
+  eval_frequency: 20000
+  save_frequency: 50000
+  log_frequency: 500
+  num_eval_episodes: 10
+  warm_up_steps: 5000
+  world_model_pretrain_steps: 20000
+
+federated:
+  enabled: false
+  num_clients: 10
+  rounds: 100
+  local_steps: 50
+  aggregation: "fedprox"
+  fedprox_mu: 0.01
+  differential_privacy: true
+  dp_epsilon: 1.0
+  dp_delta: 1.0e-5
+  dp_max_grad_norm: 1.0
+
+gpu_memory:
+  hetgnn_gb: 2.0
+  world_model_gb: 3.2
+  llm_prior_gb: 7.6
+  sac_agent_gb: 1.0
+  replay_buffer_gb: 3.0
+  total_used_gb: 13.9
+  free_gb: 2.1

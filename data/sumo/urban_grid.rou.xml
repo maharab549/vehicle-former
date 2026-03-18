@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<routes>
+    <!-- Vehicle types -->
+    <vType id="passenger" accel="2.5" decel="4.5" length="4.5" maxSpeed="13.89"
+           sigma="0.5" speedFactor="1.0" color="0,0,255"/>
+    <vType id="truck" accel="1.5" decel="3.5" length="12.0" maxSpeed="10.0"
+           sigma="0.3" speedFactor="0.9" color="255,0,0"/>
+    <vType id="bus" accel="1.8" decel="4.0" length="12.0" maxSpeed="11.0"
+           sigma="0.2" speedFactor="0.95" color="0,255,0"/>
+
+    <!-- Routes -->
+    <route id="route_h0" edges="e00_01 e01_02 e02_03 e03_04"/>
+    <route id="route_h1" edges="e10_11 e11_12 e12_13 e13_14"/>
+    <route id="route_h2" edges="e20_21 e21_22 e22_23 e23_24"/>
+    <route id="route_h3" edges="e30_31 e31_32 e32_33 e33_34"/>
+    <route id="route_h4" edges="e40_41 e41_42 e42_43 e43_44"/>
+    <route id="route_v0" edges="e00_10 e10_20 e20_30 e30_40"/>
+    <route id="route_v1" edges="e01_11 e11_21 e21_31 e31_41"/>
+    <route id="route_v2" edges="e02_12 e12_22 e22_32 e32_42"/>
+    <route id="route_v3" edges="e03_13 e13_23 e23_33 e33_43"/>
+    <route id="route_v4" edges="e04_14 e14_24 e24_34 e34_44"/>
+
+    <!-- Vehicle flows (1 hour simulation) -->
+    <flow id="flow_h0" type="passenger" route="route_h0" begin="0" end="3600" vehsPerHour="120"/>
+    <flow id="flow_h1" type="passenger" route="route_h1" begin="0" end="3600" vehsPerHour="100"/>
+    <flow id="flow_h2" type="passenger" route="route_h2" begin="0" end="3600" vehsPerHour="150"/>
+    <flow id="flow_h3" type="passenger" route="route_h3" begin="0" end="3600" vehsPerHour="80"/>
+    <flow id="flow_h4" type="passenger" route="route_h4" begin="0" end="3600" vehsPerHour="90"/>
+    <flow id="flow_v0" type="passenger" route="route_v0" begin="0" end="3600" vehsPerHour="110"/>
+    <flow id="flow_v1" type="passenger" route="route_v1" begin="0" end="3600" vehsPerHour="130"/>
+    <flow id="flow_v2" type="passenger" route="route_v2" begin="0" end="3600" vehsPerHour="100"/>
+    <flow id="flow_v3" type="passenger" route="route_v3" begin="0" end="3600" vehsPerHour="70"/>
+    <flow id="flow_v4" type="passenger" route="route_v4" begin="0" end="3600" vehsPerHour="85"/>
+    <flow id="flow_truck" type="truck" route="route_h2" begin="0" end="3600" vehsPerHour="20"/>
+    <flow id="flow_bus" type="bus" route="route_v2" begin="0" end="3600" vehsPerHour="15"/>
+</routes>

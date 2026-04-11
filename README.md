@@ -44,6 +44,14 @@ VehicleFormer integrates the following modules:
 - SAC policy optimization for continuous control actions
 - Optional world-model auxiliary learning
 - Optional LLM-prior KL regularization during training
+- Hierarchical option-conditioned SAC actor for macro/micro control coupling
+- Prioritized replay with importance sampling and TD-error feedback updates
+- Distributional quantile critics with CVaR-aware risk-sensitive policy objective
+- Adaptive Lagrangian risk constraints for online safety-risk balancing
+- RND intrinsic motivation for deep exploration in sparse and shifted regimes
+- Adaptive curriculum domain randomization driven by KPI performance
+- Policy smoothness regularization against embedding perturbations
+- Domain randomization and invariance regularization for OOD robustness
 - Stress evaluation harness for scenario-level robustness analysis
 
 ## Repository Structure

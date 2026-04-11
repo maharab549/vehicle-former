@@ -30,6 +30,14 @@ class ReplayBuffer:
         self.embeddings      = np.zeros((self.capacity, self.emb_dim), dtype=np.float32)
         self.next_embeddings = np.zeros((self.capacity, self.emb_dim), dtype=np.float32)
         self._has_embeddings = False
+        rb_cfg = cfg.get('replay_buffer', {})
+        self.prioritized = rb_cfg.get('prioritized', True)
+        self.priority_alpha = float(rb_cfg.get('priority_alpha', 0.6))
+        self.priority_beta_start = float(rb_cfg.get('priority_beta_start', 0.4))
+        self.priority_beta_frames = int(rb_cfg.get('priority_beta_frames', 200000))
+        self.priority_eps = float(rb_cfg.get('priority_eps', 1e-6))
+        self.priorities = np.ones((self.capacity,), dtype=np.float32)
+        self._sample_count = 0
 
     def add(
         self,
@@ -50,11 +58,27 @@ class ReplayBuffer:
             self.embeddings[self.ptr]      = embedding
             self.next_embeddings[self.ptr] = next_embedding
             self._has_embeddings = True
+        self.priorities[self.ptr] = self.priorities.max() if self.size > 0 else 1.0
         self.ptr  = (self.ptr + 1) % self.capacity
         self.size = min(self.size + 1, self.capacity)
 
+    def _beta(self) -> float:
+        """Anneal importance-sampling correction from beta_start to 1."""
+        frac = min(1.0, self._sample_count / max(self.priority_beta_frames, 1))
+        return self.priority_beta_start + frac * (1.0 - self.priority_beta_start)
+
     def sample(self, batch_size: int) -> Dict[str, Tensor]:
-        idx = np.random.randint(0, self.size, size=batch_size)
+        if self.prioritized:
+            scaled = self.priorities[:self.size] ** self.priority_alpha
+            probs = scaled / (scaled.sum() + 1e-8)
+            idx = np.random.choice(self.size, size=batch_size, p=probs)
+            self._sample_count += 1
+            beta = self._beta()
+            weights = (self.size * probs[idx]) ** (-beta)
+            weights = weights / (weights.max() + 1e-8)
+        else:
+            idx = np.random.randint(0, self.size, size=batch_size)
+            weights = np.ones((batch_size,), dtype=np.float32)
         def t(arr): return torch.tensor(arr[idx], dtype=torch.float32, device=self.device)
         batch = {
             "obs"      : t(self.obs),
@@ -62,11 +86,20 @@ class ReplayBuffer:
             "rewards"  : t(self.rewards),
             "next_obs" : t(self.next_obs),
             "dones"    : t(self.dones),
+            "weights"  : torch.tensor(weights, dtype=torch.float32, device=self.device).unsqueeze(-1),
+            "indices"  : idx,
         }
         if self._has_embeddings:
             batch["embeddings"]      = t(self.embeddings)
             batch["next_embeddings"] = t(self.next_embeddings)
         return batch
+
+    def update_priorities(self, indices: np.ndarray, td_errors: np.ndarray) -> None:
+        """Update PER priorities from fresh TD errors."""
+        if not self.prioritized:
+            return
+        priorities = np.abs(td_errors).reshape(-1) + self.priority_eps
+        self.priorities[indices] = priorities.astype(np.float32)
 
     def __len__(self) -> int:
         return self.size

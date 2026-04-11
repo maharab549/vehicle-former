@@ -31,6 +31,12 @@ class ChannelState:
     reliability: float       # Packet delivery ratio [0,1]
     handover_cost_ms: float  # Cost to switch to this network
     available: bool          # Whether this network is reachable
+    bandwidth_hz: float = 0.0
+    interference_dbm: float = -120.0
+    propagation_delay_ms: float = 0.0
+    processing_delay_ms: float = 0.0
+    queuing_delay_ms: float = 0.0
+    mac_contention_delay_ms: float = 0.0
 
 
 @dataclass
@@ -103,6 +109,16 @@ class NetworkSimulator:
 
         # Vehicle positions cache (updated externally for congestion-aware loads)
         self._vehicle_positions: Optional[np.ndarray] = None
+        self._sat_latency_bias_ms = 0.0
+
+    def apply_domain_profile(self, profile: Dict[str, float]) -> None:
+        """Apply episode-level randomization profile for robustness training."""
+        self._rsu_outage_prob = float(profile.get("outage_probability", self._rsu_outage_prob))
+        self._congestion_burst_prob = float(profile.get("congestion_probability", self._congestion_burst_prob))
+        low = float(profile.get("congestion_magnitude_low", 0.15))
+        high = float(profile.get("congestion_magnitude_high", 0.35))
+        self._stress_congestion_mag_range = (low, max(high, low + 0.05))
+        self._sat_latency_bias_ms = float(profile.get("sat_latency_bias_ms", 0.0))
 
     def set_vehicle_positions(self, positions: np.ndarray) -> None:
         """Update vehicle positions for congestion-aware RSU/BS loads.
@@ -222,6 +238,13 @@ class NetworkSimulator:
 
         return states
 
+    def _local_vehicle_density(self, pos: np.ndarray, radius_m: float) -> int:
+        """Estimate the number of co-channel vehicles near the current position."""
+        if self._vehicle_positions is None or len(self._vehicle_positions) == 0:
+            return 0
+        distances = np.linalg.norm(self._vehicle_positions - pos, axis=1)
+        return int(np.sum(distances <= radius_m))
+
     # ─── 5G Channel Model (3GPP UMa) ────────────────────────────────────
     def _compute_5g_channel(
         self, pos: np.ndarray, speed: float
@@ -242,8 +265,9 @@ class NetworkSimulator:
         rssi = self.p_tx_5g_dbm + self.g_tx_5g_db - pl_db
         rssi = float(np.clip(rssi, -120, -30))
 
-        # Interference from other BSs (simplified)
-        interference_db = -90 + load * 10
+        # Interference from other BSs and co-channel vehicles
+        cochannel = self._local_vehicle_density(pos, radius_m=250.0)
+        interference_db = -95 + load * 12 + 0.6 * cochannel
         noise_dbm = -174 + 10 * np.log10(self.bw_5g_mhz * 1e6) + self.noise_fig_db
         sinr = rssi - 10 * np.log10(10**(interference_db/10) + 10**(noise_dbm/10))
         sinr = float(np.clip(sinr, -10, 30))
@@ -252,10 +276,15 @@ class NetworkSimulator:
         throughput = self.bw_5g_mhz * np.log2(1 + 10**(sinr/10)) * (1 - load)
         throughput = float(max(throughput, 0.1))
 
-        # Latency model (base + load + distance propagation)
-        base_latency = 5.0 + load * 20 + d / 3e5 * 1000
-        doppler_penalty = speed * 0.5  # higher speed → more handover risk
-        latency = float(max(base_latency + doppler_penalty + self.rng.exponential(2), 3.0))
+        # Latency model: propagation + processing + queuing
+        propagation_delay_ms = d / 3e8 * 1000.0
+        processing_delay_ms = 1.5 + 3.0 * load
+        queuing_delay_ms = 2.0 + 22.0 * load + 0.04 * cochannel
+        doppler_penalty = speed * 0.15
+        latency = float(max(
+            propagation_delay_ms + processing_delay_ms + queuing_delay_ms + doppler_penalty + self.rng.exponential(1.0),
+            2.5,
+        ))
 
         # Reliability (Friis + load)
         reliability = float(np.clip(0.999 - load * 0.05 - (d / 5000) * 0.1, 0.5, 0.999))
@@ -271,6 +300,12 @@ class NetworkSimulator:
             reliability     = reliability,
             handover_cost_ms= 5.0 + speed * 0.3,
             available       = available,
+            bandwidth_hz    = self.bw_5g_mhz * 1e6,
+            interference_dbm= interference_db,
+            propagation_delay_ms= propagation_delay_ms,
+            processing_delay_ms = processing_delay_ms,
+            queuing_delay_ms    = queuing_delay_ms,
+            mac_contention_delay_ms = 0.0,
         )
 
     # ─── C-V2X Channel Model (3GPP TR 37.885) ───────────────────────────
@@ -289,7 +324,13 @@ class NetworkSimulator:
 
         if not in_range:
             return ChannelState(
-                NetworkType.V2X, -120, -30, 999.0, 0.0, 0.0, 2.0, False
+                NetworkType.V2X, -120, -30, 999.0, 0.0, 0.0, 2.0, False,
+                bandwidth_hz=20e6,
+                interference_dbm=-80.0,
+                propagation_delay_ms=0.0,
+                processing_delay_ms=0.0,
+                queuing_delay_ms=999.0,
+                mac_contention_delay_ms=0.0,
             )
 
         # Winner+ B1 path loss model for V2X
@@ -304,22 +345,25 @@ class NetworkSimulator:
         rssi = self.p_tx_v2x_dbm - pl_db
         rssi = float(np.clip(rssi, -100, -30))
 
-        # Interference scales with load (congestion makes SINR worse)
-        sinr = rssi + 90 - load * 15  # was load*5 — tripled
+        neighbors = self._local_vehicle_density(pos, radius_m=self.v2x_range_m)
+        interference_dbm = -88 + load * 14 + 0.8 * neighbors
+        # Interference scales with load and neighbor contention
+        sinr = rssi - interference_dbm
         sinr = float(np.clip(sinr, -5, 25))
 
-        # V2X latency: base + load penalty + distance + speed Doppler + jitter
-        # Under high load, V2X can become slower than 5G!
-        load_penalty = load * 30       # was load*10 — tripled
-        distance_penalty = d * 0.04    # was d*0.01 — 4x
-        speed_penalty = speed * 0.3    # Doppler effect on V2X sidelink
-        jitter = self.rng.exponential(2 + load * 5)  # load-dependent jitter
+        # V2X latency: MAC contention + propagation + processing
+        propagation_delay_ms = d / 3e8 * 1000.0
+        mac_delay_ms = 2.0 + load * 18.0 + 0.25 * neighbors
+        processing_delay_ms = 1.0 + 1.5 * load
+        queuing_delay_ms = load * 8.0
+        speed_penalty = speed * 0.2
+        jitter = self.rng.exponential(1.5 + load * 2.5)
         latency = float(max(
-            3.0 + load_penalty + distance_penalty + speed_penalty + jitter,
+            propagation_delay_ms + mac_delay_ms + processing_delay_ms + queuing_delay_ms + speed_penalty + jitter,
             2.0
         ))
 
-        throughput = 27 * np.log2(1 + 10**(sinr/10)) * (1 - load) / 100
+        throughput = 20.0 * np.log2(1 + 10**(sinr/10)) * (1 - load)
         throughput = float(max(throughput, 0.1))
 
         reliability = float(np.clip(
@@ -336,6 +380,12 @@ class NetworkSimulator:
             reliability     = reliability,
             handover_cost_ms= 2.0 + speed * 0.1,  # speed-dependent
             available       = True,
+            bandwidth_hz    = 20e6,
+            interference_dbm= interference_dbm,
+            propagation_delay_ms= propagation_delay_ms,
+            processing_delay_ms = processing_delay_ms,
+            queuing_delay_ms    = queuing_delay_ms,
+            mac_contention_delay_ms = mac_delay_ms,
         )
 
     # ─── Satellite Channel Model (LEO, ~Starlink) ────────────────────────
@@ -345,7 +395,13 @@ class NetworkSimulator:
 
         if not available:
             return ChannelState(
-                NetworkType.SAT, -120, -20, 999.0, 0.0, 0.0, 50.0, False
+                NetworkType.SAT, -120, -20, 999.0, 0.0, 0.0, 50.0, False,
+                bandwidth_hz=500e6,
+                interference_dbm=-110.0,
+                propagation_delay_ms=999.0,
+                processing_delay_ms=0.0,
+                queuing_delay_ms=0.0,
+                mac_contention_delay_ms=0.0,
             )
 
         # Free-space path loss at satellite distance
@@ -364,9 +420,11 @@ class NetworkSimulator:
         # Throughput ~100 Kbps for vehicle satellite (per roadmap)
         throughput = float(max(0.1 + sinr * 0.005, 0.05))
 
-        # Latency: propagation (2-way) + processing
-        prop_latency = 2 * slant_range_km / 300  # ms (light speed ~300 km/ms)
-        latency = float(max(self.sat_latency_base_ms + prop_latency, 18.0))
+        # Latency: 20ms one-way propagation + gateway processing
+        propagation_delay_ms = max(40.0, 2 * slant_range_km / 300)
+        processing_delay_ms = 6.0 + 2.0 * (1.0 - np.sin(np.radians(elev)))
+        queuing_delay_ms = 4.0 + 3.0 * (45.0 - min(elev, 45.0)) / 45.0
+        latency = float(max(propagation_delay_ms + processing_delay_ms + queuing_delay_ms + self._sat_latency_bias_ms, 18.0))
 
         rssi = float(np.clip(rx_power_dbw + 30 - 50, -90, -50))
         reliability = float(0.99 * np.sin(np.radians(elev)) ** 0.3)
@@ -380,6 +438,12 @@ class NetworkSimulator:
             reliability     = reliability,
             handover_cost_ms= 50.0,  # satellite handover is expensive
             available       = True,
+            bandwidth_hz    = 500e6,
+            interference_dbm= -110.0,
+            propagation_delay_ms= propagation_delay_ms,
+            processing_delay_ms = processing_delay_ms,
+            queuing_delay_ms    = queuing_delay_ms,
+            mac_contention_delay_ms = 0.0,
         )
 
     def get_infrastructure_state(self) -> InfrastructureState:

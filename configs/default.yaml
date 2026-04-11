@@ -111,6 +111,7 @@ hetgnn:
   dropout: 0.1
   embedding_dim: 256          # final node embedding size
   edge_dim: 16                # edge feature dimension
+  use_causal_mask: true
   # Edge types: vehicle-vehicle, vehicle-rsu, vehicle-bs, vehicle-satellite
   edge_types:
     - ["vehicle", "v2v", "vehicle"]
@@ -132,13 +133,17 @@ world_model:
 
 # ─── LLM Prior ──────────────────────────────────────────────────────────
 llm_prior:
-  model_name: "microsoft/Phi-3-mini-4k-instruct"
-  load_in_4bit: false         # skip 4-bit (bitsandbytes not available on Windows)
-  lora_rank: 16               # LoRA fine-tuning rank
-  lora_alpha: 32
-  lora_dropout: 0.05
-  target_modules: ["qkv_proj", "o_proj"]
-  kl_weight: 0.1              # λ in π* = argmax[E[R] - λ·D_KL(π||π_LLM)]
+  backend: "auto"            # auto | openai | ollama | heuristic
+  openai_model: "gpt-4o-mini"
+  ollama_model: "llama3:8b"
+  openai_endpoint: "https://api.openai.com/v1/chat/completions"
+  ollama_endpoint: "http://localhost:11434/api/generate"
+  beta_schedule: "adaptive"  # adaptive | fixed
+  beta_0: 1.0
+  beta_min: 0.01
+  decay_rate: 1.0e-5
+  beta_fixed: 0.1
+  cache_size: 10000
   update_frequency: 500       # update LLM prior every N steps
   inference_frequency: 10     # compute LLM log_prob every N steps (cache between)
   enabled: true               # ← LLM Prior ENABLED
@@ -153,6 +158,16 @@ sac:
   alpha: 0.2                  # initial entropy temperature
   auto_alpha: true            # automatically tune alpha
   hidden_dims: [512, 256, 128]
+  num_options: 6             # hierarchical latent options for macro-decisions
+  option_entropy_weight: 0.02
+  distributional_enabled: true
+  num_quantiles: 32
+  cvar_alpha: 0.2
+  risk_lambda: 0.15
+  adaptive_risk_constraint: true
+  cvar_target: -1.0
+  risk_lambda_init: 0.15
+  risk_lambda_lr: 5.0e-4
   batch_size: 256
   gradient_steps: 1
   target_update_interval: 1
@@ -164,6 +179,11 @@ sac:
 replay_buffer:
   capacity: 500000
   min_size: 2000              # minimum transitions before training
+  prioritized: true
+  priority_alpha: 0.6
+  priority_beta_start: 0.4
+  priority_beta_frames: 200000
+  priority_eps: 1.0e-6
 
 # ─── Training ───────────────────────────────────────────────────────────
 training:
@@ -174,6 +194,35 @@ training:
   num_eval_episodes: 5
   warm_up_steps: 5000         # random actions before training
   world_model_pretrain_steps: 20000  # pretrain world model first
+
+# ─── Novelty and Generalization ───────────────────────────────────────
+novelty:
+  domain_randomization:
+    enabled: true
+    curriculum_enabled: true
+    initial_difficulty: 0.2
+    difficulty_step: 0.05
+    max_difficulty: 1.0
+    min_difficulty: 0.0
+    outage_prob_range: [0.001, 0.02]
+    congestion_prob_range: [0.002, 0.03]
+    congestion_mag_low_range: [0.1, 0.35]
+    congestion_mag_high_range: [0.2, 0.6]
+    sat_latency_bias_range_ms: [0.0, 12.0]
+  invariance:
+    enabled: true
+    weight: 0.05
+    noise_std: 0.015
+    feature_mask_probability: 0.08
+  exploration:
+    enabled: true
+    intrinsic_reward_scale: 0.05
+    hidden_dim: 256
+    lr: 1.0e-4
+  policy_smoothness:
+    enabled: true
+    weight: 0.03
+    noise_std: 0.02
 
 # ─── Federated Learning ─────────────────────────────────────────────────
 federated:

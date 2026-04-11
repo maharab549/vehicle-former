@@ -1,4 +1,238 @@
-"""
+"""LLM prior over network selection with API, Ollama, and heuristic backends."""
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+from collections import OrderedDict
+from typing import Dict, List, Optional
+from urllib import request
+
+import numpy as np
+import torch
+
+
+class LLMPolicyPrior:
+    """Constructs a categorical prior over networks from natural-language state prompts."""
+
+    def __init__(self, cfg: dict, device: torch.device):
+        self.cfg = cfg
+        self.device = device
+        self.llm_cfg = cfg["llm_prior"]
+        self.cache_size = int(self.llm_cfg.get("cache_size", 10000))
+        self.cache: "OrderedDict[str, List[float]]" = OrderedDict()
+        self.backend_name = "heuristic"
+        self._openai_endpoint = self.llm_cfg.get("openai_endpoint", "https://api.openai.com/v1/chat/completions")
+        self._ollama_endpoint = self.llm_cfg.get("ollama_endpoint", "http://localhost:11434/api/generate")
+
+    def load_model(self, model_name: Optional[str] = None) -> None:
+        """Configure the available backend without requiring heavyweight local models."""
+        backend = self.llm_cfg.get("backend", "auto")
+        if backend in {"auto", "openai"} and os.getenv("OPENAI_API_KEY"):
+            self.backend_name = model_name or self.llm_cfg.get("openai_model", "gpt-4o-mini")
+            return
+        if backend in {"auto", "ollama"}:
+            self.backend_name = model_name or self.llm_cfg.get("ollama_model", "llama3:8b")
+            return
+        self.backend_name = "heuristic"
+
+    def get_trainable_parameters(self) -> List[torch.nn.Parameter]:
+        """Compatibility shim for the existing trainer."""
+        return []
+
+    def save(self, path: str) -> None:
+        """Persist cache and backend metadata to disk."""
+        payload = {
+            "backend_name": self.backend_name,
+            "cache": list(self.cache.items()),
+        }
+        with open(path, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle, indent=2)
+
+    def load(self, path: str) -> None:
+        """Restore cache and backend metadata from disk."""
+        if not os.path.exists(path):
+            return
+        with open(path, "r", encoding="utf-8") as handle:
+            payload = json.load(handle)
+        self.backend_name = payload.get("backend_name", self.backend_name)
+        self.cache = OrderedDict(payload.get("cache", []))
+
+    def beta_at_step(self, step: int) -> float:
+        """Return the configured adaptive KL weight at a given step."""
+        beta0 = float(self.llm_cfg.get("beta_0", 1.0))
+        decay = float(self.llm_cfg.get("decay_rate", 1.0e-5))
+        beta_min = float(self.llm_cfg.get("beta_min", 0.01))
+        return max(beta_min, beta0 * np.exp(-decay * step))
+
+    def get_prior_probs(self, obs_batch: np.ndarray) -> np.ndarray:
+        """Return a batch of network probabilities for the provided observations."""
+        priors = [self._prior_for_observation(obs) for obs in obs_batch]
+        return np.asarray(priors, dtype=np.float32)
+
+    def _prior_for_observation(self, obs: np.ndarray) -> List[float]:
+        state = self._structured_state(obs)
+        key = self._state_hash(state)
+        if key in self.cache:
+            self.cache.move_to_end(key)
+            return self.cache[key]
+        prompt = self._state_to_prompt(state)
+        probabilities = self._query_backend(prompt, state)
+        self.cache[key] = probabilities
+        if len(self.cache) > self.cache_size:
+            self.cache.popitem(last=False)
+        return probabilities
+
+    def _structured_state(self, obs: np.ndarray) -> Dict[str, float]:
+        vehicle_dim = int(self.cfg["observation"]["vehicle_dim"])
+        max_vehicles = int(self.cfg["observation"]["max_vehicles"])
+        max_rsus = int(self.cfg["observation"]["max_rsus"])
+        max_bs = int(self.cfg["observation"]["max_base_stations"])
+        rsu_dim = int(self.cfg["observation"]["rsu_dim"])
+        bs_dim = int(self.cfg["observation"]["bs_dim"])
+        vehicle_block = obs[: vehicle_dim * max_vehicles].reshape(max_vehicles, vehicle_dim)
+        ego = vehicle_block[0]
+        network_offset = vehicle_dim * max_vehicles + rsu_dim * max_rsus + bs_dim * max_bs
+        network_obs = obs[network_offset:]
+        return {
+            "speed_kmh": float(max(ego[2], 0.0) * 50.0),
+            "rssi_5g_dbm": float(ego[4] * 90.0 - 120.0),
+            "rssi_v2x_dbm": float(ego[5] * 90.0 - 120.0),
+            "sat_latency_ms": float(np.clip(ego[6], 0.0, 1.0) * 200.0),
+            "edge_load": float(np.clip(ego[7], 0.0, 1.0)),
+            "neighbors": int(round(np.clip(network_obs[5] * 10.0, 0.0, 10.0))),
+            "deadline_remaining_ms": float(np.clip(ego[9], 0.0, 1.0) * 100.0),
+        }
+
+    @staticmethod
+    def _state_hash(state: Dict[str, float]) -> str:
+        """Discretize the state before hashing to keep cache reuse high."""
+        discretized = {
+            "speed": int(state["speed_kmh"] // 5),
+            "g5": int(state["rssi_5g_dbm"] // 5),
+            "v2x": int(state["rssi_v2x_dbm"] // 5),
+            "sat": int(state["sat_latency_ms"] // 10),
+            "load": int(state["edge_load"] * 10),
+            "neighbors": int(state["neighbors"]),
+            "deadline": int(state["deadline_remaining_ms"] // 10),
+        }
+        return hashlib.sha256(json.dumps(discretized, sort_keys=True).encode("utf-8")).hexdigest()
+
+    @staticmethod
+    def _signal_word(rssi_dbm: float) -> str:
+        """Convert an RSSI measurement to a qualitative description."""
+        if rssi_dbm > -75:
+            return "strong"
+        if rssi_dbm > -90:
+            return "moderate"
+        return "weak"
+
+    def _state_to_prompt(self, state: Dict[str, float]) -> str:
+        """Format the state as the requested natural-language prompt."""
+        if state["deadline_remaining_ms"] <= 30.0:
+            latency_requirement = "safety-critical"
+        elif state["deadline_remaining_ms"] <= 60.0:
+            latency_requirement = "delay-sensitive"
+        else:
+            latency_requirement = "throughput-oriented"
+        v2x_clear = "clear" if state["neighbors"] <= 3 else "congested"
+        sat_status = "available, low congestion" if state["sat_latency_ms"] < 90 else "available, elevated latency"
+        return (
+            f"Vehicle speed: {state['speed_kmh']:.0f} km/h. "
+            f"5G signal: {state['rssi_5g_dbm']:.0f} dBm ({self._signal_word(state['rssi_5g_dbm'])}). "
+            f"C-V2X channel: {v2x_clear}, {state['neighbors']} neighbors. "
+            f"Satellite: {sat_status}. "
+            f"Current latency requirement: {latency_requirement}. "
+            "Which network should the vehicle select? Return JSON with keys 5g, cv2x, sat summing to 1."
+        )
+
+    def _query_backend(self, prompt: str, state: Dict[str, float]) -> List[float]:
+        """Query the configured backend and fall back to the heuristic prior on failure."""
+        backend = self.llm_cfg.get("backend", "auto")
+        if backend in {"auto", "openai"} and os.getenv("OPENAI_API_KEY"):
+            try:
+                return self._openai_prior(prompt)
+            except Exception:
+                pass
+        if backend in {"auto", "ollama"}:
+            try:
+                return self._ollama_prior(prompt)
+            except Exception:
+                pass
+        return self._heuristic_prior(state)
+
+    def _openai_prior(self, prompt: str) -> List[float]:
+        """Query an OpenAI-compatible chat completion endpoint."""
+        payload = {
+            "model": self.llm_cfg.get("openai_model", "gpt-4o-mini"),
+            "temperature": 0.0,
+            "response_format": {"type": "json_object"},
+            "messages": [
+                {"role": "system", "content": "You are a vehicular network expert. Output only JSON."},
+                {"role": "user", "content": prompt},
+            ],
+        }
+        req = request.Request(
+            self._openai_endpoint,
+            data=json.dumps(payload).encode("utf-8"),
+            headers={
+                "Authorization": f"Bearer {os.getenv('OPENAI_API_KEY')}",
+                "Content-Type": "application/json",
+            },
+        )
+        with request.urlopen(req, timeout=20) as response:
+            body = json.loads(response.read().decode("utf-8"))
+        content = body["choices"][0]["message"]["content"]
+        return self._parse_prior_response(content)
+
+    def _ollama_prior(self, prompt: str) -> List[float]:
+        """Query a local Ollama server."""
+        payload = {
+            "model": self.llm_cfg.get("ollama_model", "llama3:8b"),
+            "prompt": prompt,
+            "stream": False,
+            "format": "json",
+        }
+        req = request.Request(
+            self._ollama_endpoint,
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+        )
+        with request.urlopen(req, timeout=20) as response:
+            body = json.loads(response.read().decode("utf-8"))
+        return self._parse_prior_response(body.get("response", "{}"))
+
+    @staticmethod
+    def _parse_prior_response(raw: str) -> List[float]:
+        """Parse and normalize JSON network probabilities returned by the LLM."""
+        data = json.loads(raw)
+        probs = np.asarray([
+            float(data.get("5g", data.get("g5", 0.34))),
+            float(data.get("cv2x", data.get("c_v2x", 0.33))),
+            float(data.get("sat", data.get("satellite", 0.33))),
+        ], dtype=np.float32)
+        probs = np.clip(probs, 1e-4, None)
+        probs = probs / probs.sum()
+        return probs.tolist()
+
+    @staticmethod
+    def _heuristic_prior(state: Dict[str, float]) -> List[float]:
+        """Fallback prior when no LLM backend is available."""
+        g5_score = 0.08 * (state["rssi_5g_dbm"] + 110.0) - 1.4 * state["edge_load"]
+        v2x_score = 0.09 * (state["rssi_v2x_dbm"] + 105.0) - 0.12 * state["neighbors"]
+        sat_score = 4.0 - 0.04 * state["sat_latency_ms"]
+        if state["deadline_remaining_ms"] <= 30.0:
+            g5_score += 0.9
+            v2x_score += 0.6
+            sat_score -= 0.8
+        logits = np.asarray([g5_score, v2x_score, sat_score], dtype=np.float32)
+        logits = logits - logits.max()
+        probs = np.exp(logits)
+        probs = probs / probs.sum()
+        return probs.tolist()
+
+
+LLMPrior = LLMPolicyPrior"""
 LLM Policy Prior — Contribution 3
 ===================================
 Uses a quantized LLM (Phi-3-mini) with LoRA fine-tuning as a policy prior

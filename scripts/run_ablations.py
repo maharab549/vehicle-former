@@ -1,19 +1,14 @@
-"""
-VehicleFormer Ablation Studies
-==============================
-Runs 3 sequential ablation experiments to quantify each component's contribution:
-  1. No HetGNN  — flat MLP replaces graph encoder
-  2. No World Model — skip causal transformer
-  3. No LLM Prior — no Phi-3 policy guidance
-
-Each run uses identical hyperparameters to the main 300K training run.
-Results saved under checkpoints/<tag>/ and logs/<tag>/.
-"""
+"""Run VehicleFormer ablations and external baselines under a shared protocol."""
 import subprocess
 import sys
 import time
+import json
 from datetime import datetime
 from pathlib import Path
+
+import yaml
+
+from vehicleformer.models.baselines import BASELINE_REGISTRY, train_and_evaluate
 
 # Use venv Python if available, otherwise sys.executable
 _project_root = Path(__file__).resolve().parent.parent
@@ -38,6 +33,8 @@ ABLATIONS = [
         "desc": "Ablation 3/3: No LLM Prior",
     },
 ]
+
+BASELINES = sorted(BASELINE_REGISTRY)
 
 
 def run_ablation(abl: dict):
@@ -80,15 +77,27 @@ def main():
         if not ok:
             print(f"\n[WARNING] {abl['name']} failed — continuing to next ablation")
 
+    with open(_project_root / "configs" / "default.yaml", "r", encoding="utf-8") as handle:
+        cfg = yaml.safe_load(handle)
+    baseline_results = []
+    for model_name in BASELINES:
+        print(f"\n[BASELINE] Training {model_name}")
+        summary = train_and_evaluate(model_name, cfg, seed=cfg["project"]["seed"], episodes=20, output_dir=_project_root / "checkpoints")
+        baseline_results.append(summary)
+
     print("\n" + "=" * 70)
     print("  ABLATION SUMMARY")
     print("=" * 70)
     for name, ok in results.items():
         icon = "✓" if ok else "✗"
         print(f"  {icon} {name}")
+    for row in baseline_results:
+        print(f"  ✓ baseline {row['model']}: reward={row['mean_reward']:.3f}")
     print("=" * 70)
     print(f"\nCheck logs/ and checkpoints/ for per-ablation results.")
     print("Compare against full model best eval: 799.053 @ 275K steps")
+    with open(_project_root / "logs" / "ablation_baseline_summary.json", "w", encoding="utf-8") as handle:
+        json.dump({"ablations": results, "baselines": baseline_results}, handle, indent=2)
 
 
 if __name__ == "__main__":

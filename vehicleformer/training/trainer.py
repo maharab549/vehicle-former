@@ -5,6 +5,8 @@ Integrates: ICVEnvironment + HetGNN + WorldModel + SAC + ReplayBuffer
 """
 import os
 import time
+import json
+import subprocess
 import numpy as np
 import torch
 from pathlib import Path
@@ -19,6 +21,7 @@ from vehicleformer.models.world_model import WorldModel
 from vehicleformer.models.sac_agent import SACAgent
 from vehicleformer.models.llm_prior import LLMPolicyPrior
 from vehicleformer.training.replay_buffer import ReplayBuffer
+from vehicleformer.training.novelty import InvarianceRegularizer, RNDExplorer, PolicySmoothnessRegularizer
 from vehicleformer.utils.logger import Logger
 from vehicleformer.utils.metrics import MetricsTracker
 
@@ -95,19 +98,13 @@ class VehicleFormerTrainer:
         # ─── LLM Prior (Contribution 3) ──────────────────────────────
         self.llm_enabled = cfg['llm_prior'].get('enabled', False)
         self.llm_prior = None
-        self.llm_opt = None
         if self.llm_enabled:
             console.print("[yellow]Loading LLM Policy Prior...[/yellow]")
             self.llm_prior = LLMPolicyPrior(cfg, self.device)
             self.llm_prior.load_model()
-            self.llm_opt = torch.optim.Adam(
-                self.llm_prior.get_trainable_parameters(),
-                lr=1e-4, weight_decay=1e-5
-            )
-            self.llm_kl_weight = cfg['llm_prior']['kl_weight']
             self.llm_update_freq = cfg['llm_prior']['update_frequency']
             self.llm_infer_freq = cfg['llm_prior'].get('inference_frequency', 10)
-            self._cached_llm_log_prob = None
+            self._cached_llm_prior_probs = None
             console.print("[green]✓ LLM Prior ready[/green]")
 
         # ─── Optimizers for encoder + world model ─────────────────────
@@ -124,6 +121,10 @@ class VehicleFormerTrainer:
         # ─── Logging ──────────────────────────────────────────────────
         self.logger  = Logger(cfg)
         self.metrics = MetricsTracker(cfg)
+        self.invariance = InvarianceRegularizer(cfg, self.device)
+        self.rnd = RNDExplorer(cfg, emb_dim, self.device)
+        self.smoothness = PolicySmoothnessRegularizer(cfg, self.device)
+        self.curriculum_enabled = cfg.get('novelty', {}).get('domain_randomization', {}).get('curriculum_enabled', True)
 
         # ─── Training state ───────────────────────────────────────────
         self.total_steps   = 0
@@ -195,9 +196,32 @@ class VehicleFormerTrainer:
         table.add_row("SAC Actor",         f"{count(self.agent.actor):.2f}M")
         table.add_row("SAC Critic",        f"{count(self.agent.critic):.2f}M")
         if self.llm_prior is not None:
-            trainable_count = sum(p.numel() for p in self.llm_prior.get_trainable_parameters()) / 1e6
-            table.add_row("LLM Prior (trainable)", f"{trainable_count:.2f}M")
+            table.add_row("LLM Prior", self.llm_prior.backend_name)
         console.print(table)
+
+    def _llm_beta(self) -> float:
+        """Return the current KL coefficient for the LLM prior."""
+        llm_cfg = self.cfg['llm_prior']
+        if not llm_cfg.get('enabled', False):
+            return 0.0
+        if llm_cfg.get('beta_schedule', 'adaptive') == 'fixed':
+            return float(llm_cfg.get('beta_fixed', 0.1))
+        beta0 = float(llm_cfg.get('beta_0', 1.0))
+        beta_min = float(llm_cfg.get('beta_min', 0.01))
+        decay = float(llm_cfg.get('decay_rate', 1.0e-5))
+        return max(beta_min, beta0 * np.exp(-decay * self.total_steps))
+
+    @staticmethod
+    def _git_commit_hash() -> str:
+        """Return the current repository commit hash if available."""
+        try:
+            return subprocess.check_output(
+                ["git", "rev-parse", "HEAD"],
+                text=True,
+                cwd=str(Path(__file__).resolve().parents[2]),
+            ).strip()
+        except Exception:
+            return "unknown"
 
     # ─── Embedding Helper ────────────────────────────────────────────────
 
@@ -236,6 +260,10 @@ class VehicleFormerTrainer:
         console.rule("[bold cyan]VehicleFormer Training Started[/bold cyan]")
         console.print(f"Target: [green]{total_steps:,}[/green] total steps")
         console.print(f"Warm-up: [yellow]{warmup_steps:,}[/yellow] random steps\n")
+
+        if self.curriculum_enabled:
+            start_level = self.cfg.get('novelty', {}).get('domain_randomization', {}).get('initial_difficulty', 0.2)
+            self.env.set_curriculum_level(start_level)
 
         obs, _ = self.env.reset()
         emb = self._get_embedding(obs)
@@ -298,6 +326,10 @@ class VehicleFormerTrainer:
                     self.episodes_done += 1
                     ep_time = time.time() - episode_start
                     ep_metrics = info.get("episode_metrics", {})
+                    if self.curriculum_enabled:
+                        updated_level = self.env._domain_randomizer.update_from_metrics(ep_metrics)
+                        self.env.set_curriculum_level(updated_level)
+                        ep_metrics["curriculum_difficulty"] = float(updated_level)
 
                     self.logger.log_episode(
                         episode       = self.episodes_done,
@@ -362,6 +394,29 @@ class VehicleFormerTrainer:
         r    = batch["rewards"]
         a    = batch["actions"]
         done = batch["dones"]
+        weights = batch.get("weights", None)
+        indices = batch.get("indices", None)
+
+        # ─── Intrinsic exploration bonus via RND ─────────────────────
+        intrinsic_bonus = self.rnd.intrinsic_reward(h.detach())
+        if self.rnd.enabled:
+            rnd_loss = self.rnd.update(h.detach())
+            losses["rnd_loss"] = float(rnd_loss.item())
+            losses["intrinsic_reward_mean"] = float(intrinsic_bonus.mean().item())
+        r_total = r + intrinsic_bonus
+
+        # ─── Invariance regularization on encoder embeddings ──────────
+        if self.invariance.enabled and self.use_hetgnn:
+            obs_np = batch["obs"].detach().cpu().numpy()
+            aug_obs = self.invariance.augment(obs_np)
+            h_base = self._get_embedding_batch(obs_np)
+            h_aug = self._get_embedding_batch(aug_obs)
+            inv_loss = self.invariance.loss(h_base, h_aug)
+            self.gnn_opt.zero_grad()
+            inv_loss.backward()
+            torch.nn.utils.clip_grad_norm_(self.hetgnn.parameters(), 1.0)
+            self.gnn_opt.step()
+            losses["invariance_loss"] = float(inv_loss.item())
 
         # ─── Update World Model (AMP) ─────────────────────────────────
         if self.use_world_model:
@@ -381,44 +436,40 @@ class VehicleFormerTrainer:
 
         # ─── Update SAC Critic (AMP) ──────────────────────────────────
         with torch.amp.autocast('cuda', enabled=(self.device.type == 'cuda')):
-            critic_info = self.agent.update_critic(h.detach(), a, r, h_next.detach(), done)
+            critic_info = self.agent.update_critic(
+                h.detach(), a, r_total, h_next.detach(), done, weights=weights
+            )
+        td_errors = critic_info.pop("_td_errors", None)
         losses.update(critic_info)
+        if td_errors is not None and indices is not None:
+            self.buffer.update_priorities(indices, td_errors.squeeze(-1).detach().cpu().numpy())
 
         # ─── Update LLM Prior & get log-probs for KL ─────────────────
-        llm_log_prob = None
+        llm_prior_probs = None
         if self.llm_enabled and self.llm_prior is not None:
-            # Compute LLM log-prob only every N steps (expensive), cache between
-            if self.total_steps % self.llm_infer_freq == 0 or self._cached_llm_log_prob is None:
-                with torch.no_grad():
-                    a_curr, _, _ = self.agent.actor.sample(h.detach())
-                    a_curr = self.agent.physics(a_curr)
-                    self._cached_llm_log_prob = self.llm_prior.get_log_prob(h.detach(), a_curr)
-            llm_log_prob = self._cached_llm_log_prob.detach()
-
-            # Update LLM prior periodically (fine-tune projection + LoRA)
-            if self.total_steps % self.llm_update_freq == 0:
-                llm_pred_mean, llm_pred_logstd = self.llm_prior(h.detach())
-                llm_std = llm_pred_logstd.exp()
-                llm_dist = torch.distributions.Normal(llm_pred_mean, llm_std)
-                with torch.no_grad():
-                    target_actions, _, _ = self.agent.actor.sample(h.detach())
-                    target_actions = self.agent.physics(target_actions)
-                    target_pre_tanh = torch.atanh(target_actions.clamp(-0.999, 0.999))
-                llm_loss = -llm_dist.log_prob(target_pre_tanh).mean()
-                self.llm_opt.zero_grad()
-                llm_loss.backward()
-                torch.nn.utils.clip_grad_norm_(self.llm_prior.get_trainable_parameters(), 1.0)
-                self.llm_opt.step()
-                losses["llm_prior_loss"] = llm_loss.item()
+            if self.total_steps % self.llm_infer_freq == 0 or self._cached_llm_prior_probs is None:
+                prior_probs = self.llm_prior.get_prior_probs(batch["obs"].detach().cpu().numpy())
+                self._cached_llm_prior_probs = torch.tensor(prior_probs, dtype=torch.float32, device=self.device)
+            llm_prior_probs = self._cached_llm_prior_probs.detach()
+            losses["llm_beta"] = self._llm_beta()
 
         # ─── Update SAC Actor (AMP) ───────────────────────────────────
         with torch.amp.autocast('cuda', enabled=(self.device.type == 'cuda')):
             actor_info = self.agent.update_actor(
                 h.detach(),
-                llm_log_prob=llm_log_prob,
-                kl_weight=self.llm_kl_weight if self.llm_enabled else 0.0,
+                llm_prior_probs=llm_prior_probs,
+                beta=self._llm_beta(),
             )
         losses.update(actor_info)
+
+        # ─── Policy smoothness regularization ────────────────────────
+        if self.smoothness.enabled:
+            smooth_loss = self.smoothness.loss(self.agent.actor, h.detach())
+            self.agent.actor_opt.zero_grad()
+            smooth_loss.backward()
+            torch.nn.utils.clip_grad_norm_(self.agent.actor.parameters(), 1.0)
+            self.agent.actor_opt.step()
+            losses["smoothness_loss"] = float(smooth_loss.item())
 
         # ─── Soft update target networks ──────────────────────────────
         self.agent.soft_update_target()
@@ -456,9 +507,18 @@ class VehicleFormerTrainer:
 
     def _save_checkpoint(self, tag: str):
         ckpt_dir = Path(self.cfg['project']['checkpoint_dir'])
-        ckpt_dir.mkdir(exist_ok=True)
+        ckpt_dir.mkdir(parents=True, exist_ok=True)
         self.agent.save(str(ckpt_dir / f"agent_{tag}.pt"))
         torch.save(self.hetgnn.state_dict(),     ckpt_dir / f"hetgnn_{tag}.pt")
         torch.save(self.world_model.state_dict(), ckpt_dir / f"worldmodel_{tag}.pt")
         if self.llm_prior is not None:
             self.llm_prior.save(str(ckpt_dir / f"llm_prior_{tag}.pt"))
+        metadata = {
+            "tag": tag,
+            "seed": int(self.cfg['project']['seed']),
+            "git_commit": self._git_commit_hash(),
+            "total_steps": int(self.total_steps),
+            "config": self.cfg,
+        }
+        with open(ckpt_dir / f"metadata_{tag}.json", "w", encoding="utf-8") as handle:
+            json.dump(metadata, handle, indent=2, default=str)

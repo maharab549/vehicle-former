@@ -34,11 +34,11 @@ class Logger:
 
         self.csv_path = log_dir / "training_log.csv"
         with open(self.csv_path, "w") as f:
-            f.write("step,episode,reward,mean_latency_ms,p99_latency_ms,sla_50ms_pct,sla_30ms_pct,mean_reliability\n")
+            f.write("step,episode,reward,mean_latency_ms,p99_latency_ms,sla_50ms_pct,sla_30ms_pct,mean_reliability,mean_pdr,mean_throughput_mbps,mean_recovery_time_ms,mean_spectral_efficiency,handover_count\n")
 
         self.eval_csv_path = log_dir / "eval_log.csv"
         with open(self.eval_csv_path, "w") as f:
-            f.write("step,mean_reward,mean_latency_ms,p99_latency_ms,sla_50ms_pct,sla_30ms_pct,mean_reliability\n")
+            f.write("step,mean_reward,mean_latency_ms,p99_latency_ms,sla_50ms_pct,sla_30ms_pct,mean_reliability,mean_pdr,mean_throughput_mbps,mean_recovery_time_ms,mean_spectral_efficiency,handover_count\n")
 
     def log_losses(self, losses: dict, step: int):
         if self.writer:
@@ -60,8 +60,17 @@ class Logger:
         sla = extra_metrics.get("sla_50ms_met_pct", 0) if extra_metrics else 0
         sla30 = extra_metrics.get("sla_30ms_met_pct", 0) if extra_metrics else 0
         mean_reliability = extra_metrics.get("mean_reliability", 0) if extra_metrics else 0
+        mean_pdr = extra_metrics.get("mean_pdr", mean_reliability) if extra_metrics else 0
+        mean_throughput = extra_metrics.get("mean_throughput_mbps", 0) if extra_metrics else 0
+        mean_recovery = extra_metrics.get("mean_recovery_time_ms", 0) if extra_metrics else 0
+        mean_spectral_efficiency = extra_metrics.get("mean_spectral_efficiency", 0) if extra_metrics else 0
+        handover_count = extra_metrics.get("handover_count", 0) if extra_metrics else 0
         with open(self.csv_path, "a") as f:
-            f.write(f"{episode},{episode},{reward:.4f},{mean_latency:.2f},{p99:.2f},{sla:.2f},{sla30:.2f},{mean_reliability:.4f}\n")
+            f.write(
+                f"{episode},{episode},{reward:.4f},{mean_latency:.2f},{p99:.2f},{sla:.2f},{sla30:.2f},"
+                f"{mean_reliability:.4f},{mean_pdr:.4f},{mean_throughput:.4f},{mean_recovery:.4f},"
+                f"{mean_spectral_efficiency:.4f},{handover_count}\n"
+            )
 
     def log_eval(self, mean_reward: float, kpis: list, step: int):
         if self.writer:
@@ -79,5 +88,8 @@ class Logger:
                 f.write(
                     f"{step},{mean_reward:.4f},{mean_for('mean_latency_ms'):.2f},"
                     f"{mean_for('p99_latency_ms'):.2f},{mean_for('sla_50ms_met_pct'):.2f},"
-                    f"{mean_for('sla_30ms_met_pct'):.2f},{mean_for('mean_reliability'):.4f}\n"
+                    f"{mean_for('sla_30ms_met_pct'):.2f},{mean_for('mean_reliability'):.4f},"
+                    f"{mean_for('mean_pdr'):.4f},{mean_for('mean_throughput_mbps'):.4f},"
+                    f"{mean_for('mean_recovery_time_ms'):.4f},{mean_for('mean_spectral_efficiency'):.4f},"
+                    f"{mean_for('handover_count'):.0f}\n"
                 )

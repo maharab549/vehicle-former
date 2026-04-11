@@ -16,6 +16,8 @@ from collections import deque
 
 from vehicleformer.env.sumo_env import SUMOBridge, VehicleState
 from vehicleformer.env.network_sim import NetworkSimulator, NetworkType, ChannelState
+from vehicleformer.env.kpi_metrics import V2XKPITracker
+from vehicleformer.training.novelty import DomainRandomizer
 
 
 class ICVEnvironment(gym.Env):
@@ -86,6 +88,13 @@ class ICVEnvironment(gym.Env):
         self._episode_latencies = []
         self._episode_reliabilities = []
         self._last_obs = None
+        self._kpi_tracker = V2XKPITracker(cfg)
+        self._domain_randomizer = DomainRandomizer(cfg, seed=cfg['project']['seed'])
+        self._domain_profile = {}
+
+    def set_curriculum_level(self, level: float) -> None:
+        """Externally control domain randomization curriculum difficulty."""
+        self._domain_randomizer.set_difficulty(level)
 
     # ─── Core Gym API ────────────────────────────────────────────────────
 
@@ -98,10 +107,14 @@ class ICVEnvironment(gym.Env):
 
         self.sumo.reset()
         self.net_sim.step_count = 0
+        profile = self._domain_randomizer.sample()
+        self._domain_profile = profile.as_dict()
+        self.net_sim.apply_domain_profile(self._domain_profile)
         self._step_count = 0
         self._current_network = NetworkType.G5
         self._episode_latencies = []
         self._episode_reliabilities = []
+        self._kpi_tracker.reset()
 
         # Clear history
         self.obs_history.clear()
@@ -118,7 +131,13 @@ class ICVEnvironment(gym.Env):
         for _ in range(self.history_len):
             self.obs_history.append(obs.copy())
 
-        info = {"episode_step": 0, "network": self._current_network.name}
+        info = {
+            "episode_step": 0,
+            "network": self._current_network.name,
+            "network_selected": 0,
+            "domain_profile": self._domain_profile,
+            "curriculum_difficulty": self._domain_randomizer.difficulty,
+        }
         return obs, info
 
     def step(self, action: np.ndarray) -> Tuple[np.ndarray, float, bool, bool, dict]:
@@ -189,13 +208,27 @@ class ICVEnvironment(gym.Env):
         terminated = self.sumo.is_done()
         truncated  = self._step_count >= self.max_steps
 
+        kpi_info = self._kpi_tracker.step(
+            channel=chosen_channel,
+            selected_network=selected_net,
+            handover=handover,
+            ego_position=ego.position if ego is not None else None,
+        )
+
         info = {
             "episode_step"     : self._step_count,
             "network"          : selected_net.name,
             "handover"         : handover,
-            "latency_ms"       : chosen_channel.latency_ms if chosen_channel else 999.0,
-            "reliability"      : chosen_channel.reliability if chosen_channel else 0.0,
-            "throughput_mbps"  : chosen_channel.throughput_mbps if chosen_channel else 0.0,
+            "latency_ms"       : kpi_info["latency_ms"],
+            "pdr"              : kpi_info["pdr"],
+            "reliability"      : kpi_info["pdr"],
+            "throughput_mbps"  : kpi_info["throughput_mbps"],
+            "handover_count"   : kpi_info["handover_count"],
+            "recovery_time_ms" : kpi_info["recovery_time_ms"],
+            "spectral_efficiency": kpi_info["spectral_efficiency"],
+            "network_selected" : kpi_info["network_selected"],
+            "domain_profile"   : self._domain_profile,
+            "curriculum_difficulty": self._domain_randomizer.difficulty,
             "tx_power_w"       : tx_power_w,
             "offload_ratio"    : offload_ratio,
             **reward_info,
@@ -420,18 +453,7 @@ class ICVEnvironment(gym.Env):
 
     def _compute_episode_metrics(self) -> dict:
         """Compute final episode KPIs for evaluation."""
-        if not self._episode_latencies:
-            return {}
-        lats = np.array(self._episode_latencies)
-        rels = np.array(self._episode_reliabilities)
-        return {
-            "mean_latency_ms"   : float(lats.mean()),
-            "p99_latency_ms"    : float(np.percentile(lats, 99)),
-            "p50_latency_ms"    : float(np.percentile(lats, 50)),
-            "mean_reliability"  : float(rels.mean()),
-            "sla_50ms_met_pct"  : float((lats <= 50).mean() * 100),
-            "sla_30ms_met_pct"  : float((lats <= 30).mean() * 100),
-        }
+        return self._kpi_tracker.episode_summary()
 
     def get_obs_history(self) -> np.ndarray:
         """Return observation history for world model input. Shape: (T, obs_dim)"""

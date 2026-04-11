@@ -190,6 +190,7 @@ class HetGNNEncoder(nn.Module):
         self.embedding_dim = hcfg['embedding_dim']
         self.num_layers    = hcfg['num_layers']
         self.edge_dim      = hcfg['edge_dim']
+        self.use_causal_mask = hcfg.get('use_causal_mask', True)
 
         edge_types = [(e[0], e[1], e[2]) for e in hcfg['edge_types']]
 
@@ -220,6 +221,13 @@ class HetGNNEncoder(nn.Module):
             nn.LayerNorm(self.embedding_dim),
             nn.GELU(),
         )
+        self.temporal_attention = nn.MultiheadAttention(
+            embed_dim=self.embedding_dim,
+            num_heads=hcfg['num_heads'],
+            dropout=hcfg['dropout'],
+            batch_first=True,
+        )
+        self.temporal_norm = nn.LayerNorm(self.embedding_dim)
 
         # ─── Edge feature encoder ─────────────────────────────────────
         # Encodes raw edge features (distance, RSSI, etc.) → edge_dim
@@ -233,6 +241,7 @@ class HetGNNEncoder(nn.Module):
         self,
         node_features: Dict[str, Tensor],
         positions: Dict[str, Tensor],
+        timestamps: Optional[Dict[str, Tensor]] = None,
     ) -> Tuple[Tensor, Dict[str, Tensor]]:
         """
         Args:
@@ -267,11 +276,37 @@ class HetGNNEncoder(nn.Module):
 
         # ─── Output projections ───────────────────────────────────────
         node_embeddings = {nt: self.output_proj(feat) for nt, feat in h.items()}
+        if self.use_causal_mask and timestamps is not None and "vehicle" in node_embeddings and "vehicle" in timestamps:
+            node_embeddings["vehicle"] = self._apply_causal_temporal_mask(
+                node_embeddings["vehicle"], timestamps["vehicle"]
+            )
 
         # ─── Global graph embedding (mean pool vehicles) ──────────────
         graph_embedding = node_embeddings["vehicle"].mean(dim=0)
 
         return graph_embedding, node_embeddings
+
+    def _apply_causal_temporal_mask(self, features: Tensor, timestamps: Tensor) -> Tensor:
+        """Apply causal temporal attention so node embeddings attend only to past steps."""
+        if features.ndim != 2 or timestamps.ndim != 1 or features.shape[0] <= 1:
+            return features
+        order = torch.argsort(timestamps)
+        reverse = torch.argsort(order)
+        ordered = features[order].unsqueeze(0)
+        steps = ordered.shape[1]
+        attn_mask = torch.triu(
+            torch.ones(steps, steps, device=features.device, dtype=torch.bool),
+            diagonal=1,
+        )
+        attended, _ = self.temporal_attention(
+            ordered,
+            ordered,
+            ordered,
+            attn_mask=attn_mask,
+            need_weights=False,
+        )
+        attended = self.temporal_norm(attended + ordered)
+        return attended.squeeze(0)[reverse]
 
     def _build_edges(
         self,
